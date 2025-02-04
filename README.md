@@ -66,6 +66,10 @@ The User Repository Service manages user data and supports secure operations thr
 - **Expected Response:**  
   The service processes the message and sends a response, including a status, message, and a new signature, to the `user_repository_responses` queue.
 
+### Additional Development Details
+
+A good point of reference for how to use the service programmatically would be integration_tests.py
+
 ## Advanced Message Security Details
 
 ### Message Signing

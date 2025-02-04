@@ -64,7 +64,20 @@ The User Repository Service manages user data and supports secure operations thr
     ```
   
 - **Expected Response:**  
-  The service will process the message and send a response to the `user_repository_responses` queue. Responses include a status, message, and a new signature for verification.
+  The service processes the message and sends a response, including a status, message, and a new signature, to the `user_repository_responses` queue.
+
+## Advanced Message Security Details
+
+### Message Signing
+- Every message must include a valid `signature` field.
+- The signature is generated using the RSA private key with PKCS#1 v1.5 padding and SHA-256 hashing.
+- The signature is computed over all message fields except the `signature` field.
+- Upon receipt, the service verifies the signature against available RSA public keys. Failure in verification results in an error response.
+
+### Message Encryption
+- When the `encrypt` flag is set to true, the `data` field is encrypted using AES symmetric encryption in CBC mode.
+- A securely generated symmetric key is used for encryption and stored separately.
+- Encrypted messages are decrypted by the service before processing, ensuring confidentiality of sensitive data.
 
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE.md) file for details.

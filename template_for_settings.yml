@@ -1,0 +1,19 @@
+database:
+  connection_string: mysql+mysqlconnector://<username>:<password>@<host>/<database_name>
+
+rabbitmq:
+  host: <rabbitmq_host>
+  user: <rabbitmq_user>
+  password: <rabbitmq_password>
+
+cryptography:
+  private_key_paths:
+    user_repository: <path/to/user_repository/private_key.pem>
+    integration_tests: <path/to/integration_tests/private_key.pem>
+    unit_tests: <path/to/unit_tests/private_key.pem>
+  public_key_paths:
+    user_repository: <path/to/user_repository/public_key.pem>
+    integration_tests: <path/to/integration_tests/public_key.pem>
+    unit_tests: <path/to/unit_tests/public_key.pem>
+  public_keys_dir: <path/to/public_keys_directory>
+  encryption_key_path: <path/to/encryption_key.bin>

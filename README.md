@@ -70,7 +70,8 @@ Please note this software is currently under heavy development.
 
 ### Additional Development Details
 
-A good point of reference for how to use the service programmatically would be integration_tests.py
+A good point of reference for how to use the service programmatically would be integration_tests.py, please
+do not run the integration tests in a production environment.
 
 ## Advanced Message Security Details
 

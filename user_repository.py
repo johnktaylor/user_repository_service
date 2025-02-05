@@ -430,7 +430,9 @@ class UserRepository:
         Returns:
             SQLAlchemy model class.
         """
+        
         table_name = self.get_table_name(operation)
+        
         model = self.table_to_model.get(table_name)
         if not model:
             logging.error(f"No model found for table: {table_name}")
@@ -587,9 +589,9 @@ class UserRepository:
             )
         return response
 
-    def get_record(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+    def get_record_by_id(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
         """
-        Retrieve a record from the specified table.
+        Retrieve a record from the specified table by ID.
 
         Args:
             operation (str): The get operation identifier.
@@ -632,6 +634,69 @@ class UserRepository:
             )
         return response
 
+    def get_users_by_username(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+        """
+        Retrieve a user record from the users table by ID.
+
+        Args:
+            operation (str): The get operation identifier.
+            data (Dict[str, Any]): The data identifying the record to retrieve.
+            original_message (Dict[str, Any]): The original incoming message.
+            batch (bool): indicates if the call is in the scope of a batch operation.
+
+        Returns:
+            str: The JSON-encoded response.
+        """
+        model = User
+        searchparam = data.get('username')
+        if not searchparam:
+            logging.warning("Missing username for get operation")
+            return self._generate_response(original_message, operation, "error", "Missing username for get", error_code="MISSING_USERNAME")
+        try:
+            logging.debug(f"Retrieving record from table: {model.__tablename__} with username: {searchparam}")
+            record = self.session.query(model).filter_by(username=searchparam).first()
+            if not record:
+                logging.warning(f"Record not found in table {model.__tablename__} with username: {searchparam}")
+                return self._generate_response(original_message, operation, "error", "Record not found", error_code="NOT_FOUND")
+            # Convert record to dictionary excluding SQLAlchemy internal attributes
+            record_dict = {column.key: getattr(record, column.key) for column in model.__table__.columns}
+            response = self._generate_response(
+                original_message,
+                operation,
+                "success",
+                f"{operation.replace('_', ' ').capitalize()} successfully",
+                data=record_dict
+            )
+            logging.info(f"Record retrieved successfully from table: {model.__tablename__}")
+        except Exception as e:
+            logging.error(f"Error during get operation on table {model.__tablename__}: {e}")
+            response = self._generate_response(
+                original_message,
+                operation,
+                "error",
+                str(e),
+                error_code="GET_FAILED"
+            )
+        return response
+        
+    def get_record(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+        """
+        Retrieve a record from the specified table.
+
+        Args:
+            operation (str): The get operation identifier.
+            data (Dict[str, Any]): The data identifying the record to retrieve.
+            original_message (Dict[str, Any]): The original incoming message.
+            batch (bool): indicates if the call is in the scope of a batch operation.
+
+        Returns:
+            str: The JSON-encoded response.
+        """
+        if operation == 'get_users_by_username':
+            return self.get_users_by_username(operation, data, original_message, batch)
+        else:
+            return self.get_record_by_id(operation, data, original_message, batch)
+
     def get_table_name(self, operation: str) -> str:
         """
         Map operation names to table names.
@@ -643,10 +708,11 @@ class UserRepository:
             str: The corresponding table name.
         """
         operation_to_table = {
-            'create_users': 'users',       # Updated from 'create_user' to 'create_users'
-            'update_users': 'users',       # Updated from 'update_user' to 'update_users'
-            'delete_users': 'users',       # Updated from 'delete_user' to 'delete_users'
-            'get_users': 'users',          # Re-added get_users mapping
+            'create_users': 'users',
+            'update_users': 'users',
+            'delete_users': 'users',
+            'get_users': 'users',
+            'get_users_by_username': 'users',
             'create_user_details': 'user_details',
             'update_user_details': 'user_details',
             'delete_user_details': 'user_details',

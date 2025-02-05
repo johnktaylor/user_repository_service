@@ -432,6 +432,55 @@ class TestUserRepository(unittest.TestCase):
         self.assertEqual(response_data["status"], "success")
         self.assertEqual(response_data["data"]["id"], user_id)
 
+    def test_get_users_by_username(self):  # Updated from test_get_user
+        logging.debug("Running test_get_users_by_username")
+        # First, create a user to retrieve
+        create_request_id = str(uuid.uuid4())  # Generate unique request_id
+        username = f"john_doe_{uuid.uuid4()}"
+        create_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,  # Ensure ISO format
+            "operation": "create_users",  # Updated operation name
+            "data": {
+                "username": username,
+                "email": "john@example.com",
+                "user_type": "human",
+                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
+            },
+            "comment": "test_get_users_by_username"
+        }
+        create_message["request_id"] = create_request_id 
+        create_message["signature"] = self.sign_message(create_message)
+        create_response = self.send_and_receive_message(create_message)
+        create_response_data = create_response
+        print("Create Users for Get Response:", create_response_data)
+        if create_response_data["status"] != "success":
+            print(f"Error: {create_response_data.get('message')}, Error Code: {response_data.get('error_code')}")
+        self.assertEqual(create_response_data["status"], "success")
+        user_id = create_response_data["data"]["id"]
+
+        # Now, get the user
+        get_request_id = str(uuid.uuid4())  # Generate unique request_id
+        get_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,  # Ensure ISO format
+            "operation": "get_users_by_username",  # Updated operation name
+            "data": {
+                "username": username
+            },
+            "comment": "test_get_users_by_username"
+
+        }
+        get_message["request_id"] = get_request_id  # Include request_id in the message
+        get_message["signature"] = self.sign_message(get_message)
+        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        response_data = response
+        print("Get Users Response:", response_data)
+        if response_data["status"] != "success":
+            print(f"Error: {response_data.get('message')}, Error Code: {response_data.get('error_code')}")
+        self.assertEqual(response_data["status"], "success")
+        self.assertEqual(response_data["data"]["username"], username)
+        self.assertEqual(response_data["data"]["id"], user_id)
     def test_get_users_by_id_fail(self, user_id=""):
         if user_id == "":
             user_id = str(uuid.uuid4())

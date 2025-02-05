@@ -636,7 +636,7 @@ class UserRepository:
 
     def get_users_by_username(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
         """
-        Retrieve a user record from the users table by ID.
+        Retrieve a user record from the users table by username.
 
         Args:
             operation (str): The get operation identifier.

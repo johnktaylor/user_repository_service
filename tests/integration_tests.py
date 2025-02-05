@@ -481,6 +481,7 @@ class TestUserRepository(unittest.TestCase):
         self.assertEqual(response_data["status"], "success")
         self.assertEqual(response_data["data"]["username"], username)
         self.assertEqual(response_data["data"]["id"], user_id)
+        
     def test_get_users_by_id_fail(self, user_id=""):
         if user_id == "":
             user_id = str(uuid.uuid4())

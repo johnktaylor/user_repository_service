@@ -634,6 +634,56 @@ class UserRepository:
             )
         return response
 
+    def get_record_by_user_id(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+        """
+        Retrieve a record from the specified table by ID.
+
+        Args:
+            operation (str): The get operation identifier.
+            data (Dict[str, Any]): The data identifying the record to retrieve.
+            original_message (Dict[str, Any]): The original incoming message.
+            batch (bool): indicates if the call is in the scope of a batch operation.
+
+        Returns:
+            str: The JSON-encoded response.
+        """
+        model = self.get_model_class(operation)
+        searchparam = data.get('user_id')
+        if not searchparam:
+            logging.warning("Missing user_id for get operation")
+            return self._generate_response(original_message, operation, "error", "Missing user_id for get", error_code="MISSING_USER_ID")
+        try:
+            logging.debug(f"Retrieving record from table: {model.__tablename__} with user_id: {searchparam}")
+            records = self.session.query(model).filter_by(user_id=searchparam).all()
+            if not records:
+                logging.warning(f"Records not found in table {model.__tablename__} with user_id: {searchparam}")
+                return self._generate_response(original_message, operation, "error", "Records not found", error_code="NOT_FOUND")
+
+            response_data = []
+            for record in records:
+                record_dict = {column.key: getattr(record, column.key) for column in model.__table__.columns}
+                response_data.append(record_dict)
+
+            response = self._generate_response(
+                original_message,
+                operation,
+                "success",
+                f"{operation.replace('_', ' ').capitalize()} successfully",
+                data=response_data
+
+            )
+            logging.info(f"Records retrieved successfully from table: {model.__tablename__}")
+        except Exception as e:
+            logging.error(f"Error during get operation on table {model.__tablename__}: {e}")
+            response = self._generate_response(
+                original_message,
+                operation,
+                "error",
+                str(e),
+                error_code="GET_FAILED"
+            )
+        return response
+
     def get_users_by_username(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
         """
         Retrieve a user record from the users table by username.
@@ -694,8 +744,11 @@ class UserRepository:
         """
         if operation == 'get_users_by_username':
             return self.get_users_by_username(operation, data, original_message, batch)
+        elif operation.endswith('by_user_id'):
+            return self.get_record_by_user_id(operation, data, original_message, batch)
         else:
             return self.get_record_by_id(operation, data, original_message, batch)
+
 
     def get_table_name(self, operation: str) -> str:
         """
@@ -717,27 +770,34 @@ class UserRepository:
             'update_user_details': 'user_details',
             'delete_user_details': 'user_details',
             'get_user_details': 'user_details',
+            'get_user_details_by_user_id': 'user_details',
             'create_passwords': 'passwords',
             'update_passwords': 'passwords',
             'delete_passwords': 'passwords',
             'get_passwords': 'passwords',
+            'get_passwords_by_user_id': 'passwords',
             'create_webauthn_credentials': 'webauthn_credentials',
             'update_webauthn_credentials': 'webauthn_credentials',
             'delete_webauthn_credentials': 'webauthn_credentials',
             'get_webauthn_credentials': 'webauthn_credentials',
+            'get_webauthn_credentials_by_user_id': 'webauthn_credentials',
             'create_oauth2_signins': 'oauth2_signins',
             'update_oauth2_signins': 'oauth2_signins',
             'delete_oauth2_signins': 'oauth2_signins',
             'get_oauth2_signins': 'oauth2_signins',
+            'get_oauth2_signins_by_user_id': 'oauth2_signins',
             'create_public_ssh_keys': 'public_ssh_keys',
             'update_public_ssh_keys': 'public_ssh_keys',
             'delete_public_ssh_keys': 'public_ssh_keys',
             'get_public_ssh_keys': 'public_ssh_keys',
+            'get_public_ssh_keys_by_user_id': 'public_ssh_keys',
             'create_login_tokens': 'login_tokens',
             'update_login_tokens': 'login_tokens',
             'delete_login_tokens': 'login_tokens',
             'get_login_tokens': 'login_tokens',
+            'get_login_tokens_by_user_id': 'login_tokens',
             # Add more mappings as needed
+
         }
         table = operation_to_table.get(operation)
         if not table:

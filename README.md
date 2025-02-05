@@ -8,8 +8,9 @@ Please note this software is currently under heavy development.
 ## Features
 - **CRUD Operations:** Create, read, update, and delete user data.
 - **Batch Operations:** Execute grouped actions atomically.
-- **Secure Communication:** Uses digital signatures and AES encryption.
+- **Secure Communication:** Utilizes digital signatures and AES encryption.
 - **Message Processing:** Supports JSON-based messaging with RabbitMQ integration.
+- **Testing:** Includes unit and integration tests for continuous validation.
 
 ## Setup
 1. **Clone the Repository:**
@@ -22,11 +23,21 @@ Please note this software is currently under heavy development.
     pip install -r requirements.txt
     ```
 3. **Configure Settings:**
-    - Create a `settings.yml` file (refer to `template_for_settings.yml`) with your database, cryptographic, and RabbitMQ configurations.
+    - Create a `settings.yml` file by copying the provided `template_for_settings.yml` and updating it with your database, cryptographic, and RabbitMQ configurations.
 4. **Generate Cryptographic Keys:**
+    To generate all required cryptographic keys, run:
     ```bash
     python generate_keys.py --regenerate-all-keys
     ```
+    You can also perform individual key operations:
+    - **Regenerate only signing keys:**
+      ```bash
+      python generate_keys.py --regenerate-signing-keys-only
+      ```
+    - **Regenerate only the encryption key:**
+      ```bash
+      python generate_keys.py --regenerate-encryption-key-only
+      ```
 5. **Initialize the Database:**
     ```bash
     mysql -u your_db_user -p < init.sql
@@ -41,7 +52,7 @@ Please note this software is currently under heavy development.
 
 ## Usage
 - **Message Format:**  
-  The service expects JSON messages containing fields like `client_id`, `request_id`, `timestamp`, `operation`, and optionally `data`, `signature`, and an `encrypt` flag.
+  The service expects JSON messages with fields like `client_id`, `request_id`, `timestamp`, `operation`, and optionally `data`, `signature`, and an `encrypt` flag.
   
 - **Example Message:**  
     ```json
@@ -66,12 +77,21 @@ Please note this software is currently under heavy development.
     ```
   
 - **Expected Response:**  
-  The service processes the message and sends a response, including a status, message, and a new signature, to the `user_repository_responses` queue.
+  The service processes the message and sends a response (which includes status, message, and a new signature) to the `user_repository_responses` queue.
 
 ### Additional Development Details
 
 A good point of reference for how to use the service programmatically would be integration_tests.py, please
 do not run the integration tests in a production environment.
+
+## Testing
+- **Running Unit and Integration Tests:**
+    To run all tests, execute:
+    ```bash
+    python -m unittest discover tests
+    ```
+- **Important:**  
+  Ensure your `settings.yml` is correctly configured. **Integration tests should not be run in a production environment.**
 
 ## Advanced Message Security Details
 
@@ -84,7 +104,14 @@ do not run the integration tests in a production environment.
 ### Message Encryption
 - When the `encrypt` flag is set to true, the `data` field is encrypted using AES symmetric encryption in CBC mode.
 - A securely generated symmetric key is used for encryption and stored separately.
-- Encrypted messages are decrypted by the service before processing, ensuring confidentiality of sensitive data.
+- Encrypted messages are decrypted by the service before processing, ensuring data confidentiality.
+
+## Contributing
+Contributions are welcome! Please follow these steps:
+1. Fork the repository.
+2. Create a new feature branch.
+3. Commit your changes with clear messages.
+4. Open a pull request describing your changes.
 
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE.md) file for details.

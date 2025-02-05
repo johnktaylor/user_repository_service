@@ -213,30 +213,33 @@ class TestUserRepository(unittest.TestCase):
 
         self.fail(f"No response received for request_id: {request_id} within timeout period.")
 
-    def test_create_users_pass(self):  # Updated method name from test_create_user to test_create_users
-        logging.debug("Running test_create_users")
-        request_id = str(uuid.uuid4())  # Generate unique request_id
+    def __create_user(self, testname, request_id, username, email="user@integration-tests.com"):
+        request_id = str(uuid.uuid4())
         message = {
             "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",  # Updated operation name
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_create_users"
+            "timestamp": self.timestamp,
+            "operation": "create_users",
+            "data": {"username": username, "email": email, "user_type": "human", "expiry_date": "2024-01-01T00:00:00Z"},
+            "comment": testname
         }
-        message["request_id"] = request_id  # Include request_id in the message
+        message["request_id"] = request_id
         message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)  # Removed request_id parameter
-        response_data = response  # Already a dict
-        print("Create Users Response:", response_data)
-        if response_data["status"] != "success":
-            self.fail(f"Create Users failed with status: {response_data['status']}")
-        self.assertEqual(response_data["status"], "success")
-        self.assertIn("id", response_data["data"])
+        response = self.send_and_receive_message(message)
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(response["request_id"], request_id)
+        self.assertIn("id", response["data"])
+        self.assertIn("signature", response)
+        return response
+
+
+    def test_create_users_pass(self, testname="test_create_users_pass"):  # Updated method name from test_create_user to test_create_users
+        logging.debug("Running test_create_users")
+        response = self.__create_user(testname, str(uuid.uuid4()), "john_doe_" + str(uuid.uuid4()))
+        print("Create Users Response:", response)
+        if response["status"] != "success":
+            self.fail(f"Create Users failed with status: {response['status']}")
+        self.assertEqual(response["status"], "success")
+        self.assertIn("id", response["data"])
 
     def test_create_users_fail(self):  # Updated method name from test_create_user to test_create_users
         logging.debug("Running test_create_users")
@@ -259,7 +262,6 @@ class TestUserRepository(unittest.TestCase):
         if response["status"] != "error":
             self.fail(f"Create Users failed with status: {response['status']}")
         self.assertEqual(response["status"], "error")
-
 
     def test_create_users_encrypted(self):
         logging.debug("Running test_create_users_encrypted")
@@ -288,33 +290,14 @@ class TestUserRepository(unittest.TestCase):
         self.assertEqual(response["status"], "success")
         self.assertIn("id", response_data)
 
-    def test_update_users(self):  # Updated from test_update_user
+    def test_update_users(self):
         logging.debug("Running test_update_users")
-        # First, create a user to update
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",  # Updated operation name
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_update_users"
-        }
-        create_message["request_id"] = create_request_id  # Include request_id in the message
-        create_message["signature"] = self.sign_message(create_message)
-        create_response = self.send_and_receive_message(create_message)  # Removed request_id parameter
+        # First, create a user to update using __create_user
+        create_response = self.__create_user("test_update_users", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_response_data = create_response
-        print("Create Users for Update Response:", create_response_data)
-        if create_response_data["status"] != "success":
-            print(f"Error: {create_response_data.get('message')}, Error Code: {create_response_data.get('error_code')}")
-        self.assertEqual(create_response_data["status"], "success")
         user_id = create_response_data["data"]["id"]
 
-        # Now, update the user
+        # Now, update the user remains unchanged
         update_request_id = str(uuid.uuid4())  # Generate unique request_id
         update_message = {
             "client_id": self.client_id,
@@ -322,7 +305,7 @@ class TestUserRepository(unittest.TestCase):
             "operation": "update_users",  # Updated operation name
             "data": {
                 "id": user_id,
-                "username": f"john_doe_up_{uuid.uuid4()}",  # Updated to ensure uniqueness
+                "username": f"john_doe_up_{uuid.uuid4()}",
                 "email": "john_updated@example.com",
                 "user_type": "human",
                 "expiry_date": "2025-01-01T00:00:00Z"  # Ensure timestamp format
@@ -331,46 +314,25 @@ class TestUserRepository(unittest.TestCase):
         }
         update_message["request_id"] = update_request_id  # Include request_id in the message
         update_message["signature"] = self.sign_message(update_message)
-        response = self.send_and_receive_message(update_message)  # Removed request_id parameter
+        response = self.send_and_receive_message(update_message)
         response_data = response
         print("Update Users Response:", response_data)
-        if response_data["status"] != "success":
-            print(f"Error: {response_data.get('message')}, Error Code: {response_data.get('error_code')}")
         self.assertEqual(response_data["status"], "success")
         self.assertEqual(response_data["data"]["id"], user_id)
 
-    def test_delete_users(self):  # Updated from test_delete_user
+    def test_delete_users(self):
         logging.debug("Running test_delete_users")
-        # First, create a user to delete
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",  # Updated operation name
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_delete_users"
-        }
-        create_message["request_id"] = create_request_id  # Include request_id in the message
-        create_message["signature"] = self.sign_message(create_message)
-        create_response = self.send_and_receive_message(create_message)  # Removed request_id parameter
+        # First, create a user to delete using __create_user
+        create_response = self.__create_user("test_delete_users", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_response_data = create_response
-        print("Create Users for Delete Response:", create_response_data)
-        if create_response_data["status"] != "success":
-            print(f"Error: {create_response_data.get('message')}, Error Code: {create_response_data.get('error_code')}")
-        self.assertEqual(create_response_data["status"], "success")
         user_id = create_response_data["data"]["id"]
 
-        # Now, delete the user
+        # Now, delete the user remains unchanged
         delete_request_id = str(uuid.uuid4())  # Generate unique request_id
         delete_message = {
             "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "delete_users",  # Updated operation name
+            "timestamp": self.timestamp,
+            "operation": "delete_users",
             "data": {
                 "id": user_id
             },
@@ -378,45 +340,24 @@ class TestUserRepository(unittest.TestCase):
         }
         delete_message["request_id"] = delete_request_id  # Include request_id in the message
         delete_message["signature"] = self.sign_message(delete_message)
-        response = self.send_and_receive_message(delete_message)  # Removed request_id parameter
+        response = self.send_and_receive_message(delete_message)
         response_data = response
         print("Delete Users Response:", response_data)
-        if response_data["status"] != "success":
-            print(f"Error: {response_data.get('message')}, Error Code: {response_data.get('error_code')}")
         self.assertEqual(response_data["status"], "success")
 
-    def test_get_users_by_id(self):  # Updated from test_get_user
+    def test_get_users_by_id(self):
         logging.debug("Running test_get_users")
-        # First, create a user to retrieve
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",  # Updated operation name
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_get_users"
-        }
-        create_message["request_id"] = create_request_id  # Include request_id in the message
-        create_message["signature"] = self.sign_message(create_message)
-        create_response = self.send_and_receive_message(create_message)  # Removed request_id parameter
+        # First, create a user to retrieve using __create_user
+        create_response = self.__create_user("test_get_users_by_id", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_response_data = create_response
-        print("Create Users for Get Response:", create_response_data)
-        if create_response_data["status"] != "success":
-            print(f"Error: {create_response_data.get('message')}, Error Code: {response_data.get('error_code')}")
-        self.assertEqual(create_response_data["status"], "success")
         user_id = create_response_data["data"]["id"]
 
         # Now, get the user
         get_request_id = str(uuid.uuid4())  # Generate unique request_id
         get_message = {
             "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "get_users",  # Updated operation name
+            "timestamp": self.timestamp,
+            "operation": "get_users",
             "data": {
                 "id": user_id
             },
@@ -424,64 +365,40 @@ class TestUserRepository(unittest.TestCase):
         }
         get_message["request_id"] = get_request_id  # Include request_id in the message
         get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        response = self.send_and_receive_message(get_message)
         response_data = response
         print("Get Users Response:", response_data)
-        if response_data["status"] != "success":
-            print(f"Error: {response_data.get('message')}, Error Code: {response_data.get('error_code')}")
         self.assertEqual(response_data["status"], "success")
         self.assertEqual(response_data["data"]["id"], user_id)
 
-    def test_get_users_by_username(self):  # Updated from test_get_user
+    def test_get_users_by_username(self):
         logging.debug("Running test_get_users_by_username")
-        # First, create a user to retrieve
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
+        # First, create a user to retrieve using __create_user
         username = f"john_doe_{uuid.uuid4()}"
-        create_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",  # Updated operation name
-            "data": {
-                "username": username,
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_get_users_by_username"
-        }
-        create_message["request_id"] = create_request_id 
-        create_message["signature"] = self.sign_message(create_message)
-        create_response = self.send_and_receive_message(create_message)
+        create_response = self.__create_user("test_get_users_by_username", str(uuid.uuid4()), username)
         create_response_data = create_response
-        print("Create Users for Get Response:", create_response_data)
-        if create_response_data["status"] != "success":
-            print(f"Error: {create_response_data.get('message')}, Error Code: {response_data.get('error_code')}")
-        self.assertEqual(create_response_data["status"], "success")
         user_id = create_response_data["data"]["id"]
 
-        # Now, get the user
+        # Now, get the user by username
         get_request_id = str(uuid.uuid4())  # Generate unique request_id
         get_message = {
             "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "get_users_by_username",  # Updated operation name
+            "timestamp": self.timestamp,
+            "operation": "get_users_by_username",
             "data": {
                 "username": username
             },
             "comment": "test_get_users_by_username"
-
         }
         get_message["request_id"] = get_request_id  # Include request_id in the message
         get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        response = self.send_and_receive_message(get_message)
         response_data = response
         print("Get Users Response:", response_data)
-        if response_data["status"] != "success":
-            print(f"Error: {response_data.get('message')}, Error Code: {response_data.get('error_code')}")
         self.assertEqual(response_data["status"], "success")
         self.assertEqual(response_data["data"]["username"], username)
         self.assertEqual(response_data["data"]["id"], user_id)
-        
+
     def test_get_users_by_id_fail(self, user_id=""):
         if user_id == "":
             user_id = str(uuid.uuid4())
@@ -725,7 +642,7 @@ class TestUserRepository(unittest.TestCase):
 
     def test_create_user_after_batch_error(self):
         self.test_batch_operation_fail("test_create_user_after_batch_error")
-        self.test_create_users_pass()
+        self.test_create_users_pass("test_create_user_after_batch_error")
 
     def test_create_multiple_batches(self):
         self.test_batch_operation_pass("test_create_multiple_batches_1")
@@ -751,44 +668,28 @@ class TestUserRepository(unittest.TestCase):
 
     def test_create_user_details(self):
         logging.debug("Running test_create_user_details")
-        # First, create a user to associate with user details
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_create_user_details"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
-        create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
-        user_id = create_user_response_data["data"]["id"]
+        # First, create a user using __create_user
+        create_response = self.__create_user("test_create_user_details", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
+        create_response_data = create_response
+        user_id = create_response_data["data"]["id"]
 
-        # Now, create user details
+        # Now, create user details remains unchanged
         request_id = str(uuid.uuid4())  # Generate unique request_id
         message = {
             "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
+            "timestamp": self.timestamp,
             "operation": "create_user_details",
             "data": {
                 "user_id": user_id,
                 "details": {"address": "123 Main St"},
-                "created_at": "2023-01-01T12:00:00Z",  # Updated to ISO format
-                "updated_at": "2023-01-01T12:00:00Z"  # Updated to ISO format
+                "created_at": "2023-01-01T12:00:00Z",
+                "updated_at": "2023-01-01T12:00:00Z"
             },
             "comment": "test_create_user_details"
         }
         message["request_id"] = request_id  # Include request_id in the message
         message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)  # Removed request_id parameter
+        response = self.send_and_receive_message(message)
         response_data = response
         print("Create User Details Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -797,23 +698,8 @@ class TestUserRepository(unittest.TestCase):
     def test_update_user_details(self):
         logging.debug("Running test_update_user_details")
         # First, create a user to associate with user details
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            }
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_update_user_details", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")  # Removed request_id parameter
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create user details
@@ -862,24 +748,8 @@ class TestUserRepository(unittest.TestCase):
     def test_delete_user_details(self):
         logging.debug("Running test_delete_user_details")
         # First, create a user to associate with user details
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_delete_user_details"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_delete_user_details", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create user details
@@ -924,24 +794,8 @@ class TestUserRepository(unittest.TestCase):
     def test_get_user_details(self):
         logging.debug("Running test_get_user_details")
         # First, create a user to associate with user details
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_get_user_details"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_get_user_details", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create user details
@@ -986,28 +840,12 @@ class TestUserRepository(unittest.TestCase):
 
     def test_create_webauthn_credentials(self):
         logging.debug("Running test_create_webauthn_credentials")
-        # First, create a user to associate with webauthn credentials
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_create_webauthn_credentials"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        # First, create a user using __create_user
+        create_user_response = self.__create_user("test_create_webauthn_credentials", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
-        # Now, create webauthn credentials
+        # Now, create webauthn credentials remains unchanged
         request_id = str(uuid.uuid4())  # Generate unique request_id
         credential_id = str(uuid.uuid4())  # Generate a unique credential_id
         message = {
@@ -1030,7 +868,7 @@ class TestUserRepository(unittest.TestCase):
         }
         message["request_id"] = request_id  # Include request_id in the message
         message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)  # Removed request_id parameter
+        response = self.send_and_receive_message(message)
         response_data = response
         print("Create WebAuthn Credentials Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1039,24 +877,8 @@ class TestUserRepository(unittest.TestCase):
     def test_update_webauthn_credentials(self):
         logging.debug("Running test_update_webauthn_credentials")
         # First, create a user to associate with webauthn credentials
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_update_webauthn_credentials"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_update_webauthn_credentials", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create webauthn credentials
@@ -1117,24 +939,8 @@ class TestUserRepository(unittest.TestCase):
     def test_delete_webauthn_credentials(self):
         logging.debug("Running test_delete_webauthn_credentials")
         # First, create a user to associate with webauthn credentials
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_delete_webauthn_credentials"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_delete_webauthn_credentials", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create webauthn credentials
@@ -1186,24 +992,8 @@ class TestUserRepository(unittest.TestCase):
     def test_get_webauthn_credentials(self):
         logging.debug("Running test_get_webauthn_credentials")
         # First, create a user to associate with webauthn credentials
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_get_webauthn_credentials"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_get_webauthn_credentials", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create webauthn credentials
@@ -1256,24 +1046,8 @@ class TestUserRepository(unittest.TestCase):
     def test_create_oauth2_signins(self):
         logging.debug("Running test_create_oauth2_signins")
         # First, create a user to associate with oauth2 signins
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_create_oauth2_signins"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_create_oauth2_signins", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create oauth2 signins
@@ -1306,25 +1080,8 @@ class TestUserRepository(unittest.TestCase):
 
     def test_update_oauth2_signins(self):
         logging.debug("Running test_update_oauth2_signins")
-        # First, create a user to associate with oauth2 signins
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_update_oauth2_signins"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_update_oauth2_signins", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create oauth2 signins
@@ -1386,24 +1143,8 @@ class TestUserRepository(unittest.TestCase):
     def test_delete_oauth2_signins(self):
         logging.debug("Running test_delete_oauth2_signins")
         # First, create a user to associate with oauth2 signins
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_delete_oauth2_signins"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_delete_oauth2_signins", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create oauth2 signins
@@ -1454,24 +1195,8 @@ class TestUserRepository(unittest.TestCase):
     def test_get_oauth2_signins(self):
         logging.debug("Running test_get_oauth2_signins")
         # First, create a user to associate with oauth2 signins
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_get_oauth2_signins"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_get_oauth2_signins", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create oauth2 signins
@@ -1523,24 +1248,8 @@ class TestUserRepository(unittest.TestCase):
     def test_create_public_ssh_keys(self):
         logging.debug("Running test_create_public_ssh_keys")
         # First, create a user to associate with public SSH keys
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_create_public_ssh_keys"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_create_public_ssh_keys", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create public SSH keys
@@ -1572,24 +1281,8 @@ class TestUserRepository(unittest.TestCase):
     def test_update_public_ssh_keys(self):
         logging.debug("Running test_update_public_ssh_keys")
         # First, create a user to associate with public SSH keys
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_update_public_ssh_keys"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_update_public_ssh_keys", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create public SSH keys
@@ -1646,24 +1339,8 @@ class TestUserRepository(unittest.TestCase):
     def test_delete_public_ssh_keys(self):
         logging.debug("Running test_delete_public_ssh_keys")
         # First, create a user to associate with public SSH keys
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_delete_public_ssh_keys"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_delete_public_ssh_keys", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create public SSH keys
@@ -1712,24 +1389,8 @@ class TestUserRepository(unittest.TestCase):
     def test_get_public_ssh_keys(self):
         logging.debug("Running test_get_public_ssh_keys")
         # First, create a user to associate with public SSH keys
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_get_public_ssh_keys"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_get_public_ssh_keys", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create public SSH keys
@@ -1779,24 +1440,8 @@ class TestUserRepository(unittest.TestCase):
     def test_create_login_tokens(self):
         logging.debug("Running test_create_login_tokens")
         # First, create a user to associate with login tokens
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_create_login_tokens"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_create_login_tokens", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create login tokens
@@ -1824,24 +1469,8 @@ class TestUserRepository(unittest.TestCase):
     def test_update_login_tokens(self):
         logging.debug("Running test_update_login_tokens")
         # First, create a user to associate with login tokens
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_update_login_tokens"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_update_login_tokens", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create login tokens
@@ -1891,24 +1520,8 @@ class TestUserRepository(unittest.TestCase):
     def test_delete_login_tokens(self):
         logging.debug("Running test_delete_login_tokens")
         # First, create a user to associate with login tokens
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_delete_login_tokens"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_delete_login_tokens", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create login tokens
@@ -1953,24 +1566,8 @@ class TestUserRepository(unittest.TestCase):
     def test_get_login_tokens(self):
         logging.debug("Running test_get_login_tokens")
         # First, create a user to associate with login tokens
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_get_login_tokens"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_get_login_tokens", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create login tokens
@@ -2016,24 +1613,8 @@ class TestUserRepository(unittest.TestCase):
     def test_create_passwords(self):
         logging.debug("Running test_create_passwords")
         # First, create a user to associate with passwords
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_create_passwords"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_create_passwords", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create passwords
@@ -2061,24 +1642,8 @@ class TestUserRepository(unittest.TestCase):
     def test_update_passwords(self):
         logging.debug("Running test_update_passwords")
         # First, create a user to associate with passwords
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_update_passwords"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_update_passwords", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create passwords
@@ -2128,24 +1693,8 @@ class TestUserRepository(unittest.TestCase):
     def test_delete_passwords(self):
         logging.debug("Running test_delete_passwords")
         # First, create a user to associate with passwords
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_delete_passwords"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_delete_passwords", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create passwords
@@ -2190,24 +1739,8 @@ class TestUserRepository(unittest.TestCase):
     def test_get_passwords(self):
         logging.debug("Running test_get_passwords")
         # First, create a user to associate with passwords
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_user_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "create_users",
-            "data": {
-                "username": f"john_doe_{uuid.uuid4()}",
-                "email": "john@example.com",
-                "user_type": "human",
-                "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-            },
-            "comment": "test_get_passwords"
-        }
-        create_user_message["request_id"] = create_request_id  # Include request_id in the message
-        create_user_message["signature"] = self.sign_message(create_user_message)
-        create_user_response = self.send_and_receive_message(create_user_message)  # Removed request_id parameter
+        create_user_response = self.__create_user("test_get_passwords", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
         create_user_response_data = create_user_response
-        self.assertEqual(create_user_response_data["status"], "success")
         user_id = create_user_response_data["data"]["id"]
 
         # Now, create passwords
@@ -2476,6 +2009,279 @@ class TestUserRepository(unittest.TestCase):
             response = self.send_and_receive_message(batch_message)
             self.assertEqual(response["status"], "success")
             logging.info(f"Block {block_start // block_size + 1} processed successfully")
+
+    def test_get_user_details_by_user_id(self):
+        logging.debug("Running test_get_user_details_by_user_id")
+        # Create a user first
+        create_user_response = self.__create_user("test_get_user_details_by_user_id", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
+        user_id = create_user_response["data"]["id"]
+
+        # Create user details record for the user
+        details_request_id = str(uuid.uuid4())
+        create_details_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "create_user_details",
+            "data": {
+                "user_id": user_id,
+                "details": {"address": "123 Test St"},
+                "created_at": "2023-01-01T12:00:00Z",
+                "updated_at": "2023-01-01T12:00:00Z"
+            },
+            "comment": "test_create_user_details_for_get_by_user_id"
+        }
+        create_details_message["request_id"] = details_request_id
+        create_details_message["signature"] = self.sign_message(create_details_message)
+        create_details_response = self.send_and_receive_message(create_details_message)
+        self.assertEqual(create_details_response["status"], "success")
+
+        # Get user details by user_id
+        get_request_id = str(uuid.uuid4())
+        get_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "get_user_details_by_user_id",
+            "data": {"user_id": user_id},
+            "comment": "test_get_user_details_by_user_id"
+        }
+        get_message["request_id"] = get_request_id
+        get_message["signature"] = self.sign_message(get_message)
+        response = self.send_and_receive_message(get_message)
+        self.assertEqual(response["status"], "success")
+        # Expect a list of user details records
+        self.assertIsInstance(response["data"], list)
+        self.assertGreaterEqual(len(response["data"]), 1)
+        for record in response["data"]:
+            self.assertEqual(record["user_id"], user_id)
+
+    def test_get_passwords_by_user_id(self):
+        logging.debug("Running test_get_passwords_by_user_id")
+        # Create a user
+        create_user_response = self.__create_user("test_get_passwords_by_user_id", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
+        user_id = create_user_response["data"]["id"]
+
+        # Create a password record for that user
+        password_request_id = str(uuid.uuid4())
+        create_password_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "create_passwords",
+            "data": {
+                "user_id": user_id,
+                "password_hash": "test_hash",
+                "expiry_date": "2024-01-01T00:00:00Z",
+                "created_at": "2023-01-01T12:00:00Z"
+            },
+            "comment": "test_create_password_for_get_by_user_id"
+        }
+        create_password_message["request_id"] = password_request_id
+        create_password_message["signature"] = self.sign_message(create_password_message)
+        create_password_response = self.send_and_receive_message(create_password_message)
+        self.assertEqual(create_password_response["status"], "success")
+
+        # Get passwords by user_id
+        get_request_id = str(uuid.uuid4())
+        get_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "get_passwords_by_user_id",
+            "data": {"user_id": user_id},
+            "comment": "test_get_passwords_by_user_id"
+        }
+        get_message["request_id"] = get_request_id
+        get_message["signature"] = self.sign_message(get_message)
+        response = self.send_and_receive_message(get_message)
+        self.assertEqual(response["status"], "success")
+        self.assertIsInstance(response["data"], list)
+        self.assertGreaterEqual(len(response["data"]), 1)
+        for record in response["data"]:
+            self.assertEqual(record["user_id"], user_id)
+
+    def test_get_webauthn_credentials_by_user_id(self):
+        logging.debug("Running test_get_webauthn_credentials_by_user_id")
+        # Create a user
+        create_user_response = self.__create_user("test_get_webauthn_credentials_by_user_id", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
+        user_id = create_user_response["data"]["id"]
+
+        # Create a webauthn credential for that user
+        webauthn_request_id = str(uuid.uuid4())
+        create_webauthn_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "create_webauthn_credentials",
+            "data": {
+                "user_id": user_id,
+                "credential_id": str(uuid.uuid4()),
+                "public_key": "public_key_data",
+                "sign_count": 0,
+                "transports": "usb",
+                "attestation_format": "packed",
+                "credential_type": "public-key",
+                "created_at": "2023-01-01T12:00:00Z",
+                "last_used_at": "2023-01-01T12:00:00Z",
+                "counter_last_updated": "2023-01-01T12:00:00Z"
+            },
+            "comment": "test_create_webauthn_for_get_by_user_id"
+        }
+        create_webauthn_message["request_id"] = webauthn_request_id
+        create_webauthn_message["signature"] = self.sign_message(create_webauthn_message)
+        create_webauthn_response = self.send_and_receive_message(create_webauthn_message)
+        self.assertEqual(create_webauthn_response["status"], "success")
+
+        # Get webauthn credentials by user_id
+        get_request_id = str(uuid.uuid4())
+        get_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "get_webauthn_credentials_by_user_id",
+            "data": {"user_id": user_id},
+            "comment": "test_get_webauthn_credentials_by_user_id"
+        }
+        get_message["request_id"] = get_request_id
+        get_message["signature"] = self.sign_message(get_message)
+        response = self.send_and_receive_message(get_message)
+        self.assertEqual(response["status"], "success")
+        self.assertIsInstance(response["data"], list)
+        self.assertGreaterEqual(len(response["data"]), 1)
+        for record in response["data"]:
+            self.assertEqual(record["user_id"], user_id)
+
+    def test_get_oauth2_signins_by_user_id(self):
+        logging.debug("Running test_get_oauth2_signins_by_user_id")
+        # Create a user
+        create_user_response = self.__create_user("test_get_oauth2_signins_by_user_id", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
+        user_id = create_user_response["data"]["id"]
+
+        # Create an OAuth2 signin record for that user
+        oauth_request_id = str(uuid.uuid4())
+        create_oauth_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "create_oauth2_signins",
+            "data": {
+                "user_id": user_id,
+                "name": "google",
+                "provider": "Google",
+                "openid_identifier": "openid_identifier_data",
+                "access_token": "access_token_data",
+                "refresh_token": "refresh_token_data",
+                "token_expires_at": "2024-01-01T12:00:00Z",
+                "scopes": "email profile",
+                "id_token": "id_token_data",
+                "last_refreshed": "2023-01-01T12:00:00Z"
+            },
+            "comment": "test_create_oauth2_for_get_by_user_id"
+        }
+        create_oauth_message["request_id"] = oauth_request_id
+        create_oauth_message["signature"] = self.sign_message(create_oauth_message)
+        create_oauth_response = self.send_and_receive_message(create_oauth_message)
+        self.assertEqual(create_oauth_response["status"], "success")
+
+        # Get OAuth2 signins by user_id
+        get_request_id = str(uuid.uuid4())
+        get_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "get_oauth2_signins_by_user_id",
+            "data": {"user_id": user_id},
+            "comment": "test_get_oauth2_signins_by_user_id"
+        }
+        get_message["request_id"] = get_request_id
+        get_message["signature"] = self.sign_message(get_message)
+        response = self.send_and_receive_message(get_message)
+        self.assertEqual(response["status"], "success")
+        self.assertIsInstance(response["data"], list)
+        self.assertGreaterEqual(len(response["data"]), 1)
+        for record in response["data"]:
+            self.assertEqual(record["user_id"], user_id)
+
+    def test_get_public_ssh_keys_by_user_id(self):
+        logging.debug("Running test_get_public_ssh_keys_by_user_id")
+        # Create a user
+        create_user_response = self.__create_user("test_get_public_ssh_keys_by_user_id", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
+        user_id = create_user_response["data"]["id"]
+
+        # Create a public SSH key record for that user
+        ssh_request_id = str(uuid.uuid4())
+        create_ssh_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "create_public_ssh_keys",
+            "data": {
+                "user_id": user_id,
+                "name": "my_ssh_key",
+                "ssh_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC...",
+                "key_type": "rsa",
+                "fingerprint": str(uuid.uuid4()),
+                "created_at": "2023-01-01T12:00:00Z"
+            },
+            "comment": "test_create_ssh_for_get_by_user_id"
+        }
+        create_ssh_message["request_id"] = ssh_request_id
+        create_ssh_message["signature"] = self.sign_message(create_ssh_message)
+        create_ssh_response = self.send_and_receive_message(create_ssh_message)
+        self.assertEqual(create_ssh_response["status"], "success")
+
+        # Get public SSH keys by user_id
+        get_request_id = str(uuid.uuid4())
+        get_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "get_public_ssh_keys_by_user_id",
+            "data": {"user_id": user_id},
+            "comment": "test_get_public_ssh_keys_by_user_id"
+        }
+        get_message["request_id"] = get_request_id
+        get_message["signature"] = self.sign_message(get_message)
+        response = self.send_and_receive_message(get_message)
+        self.assertEqual(response["status"], "success")
+        self.assertIsInstance(response["data"], list)
+        self.assertGreaterEqual(len(response["data"]), 1)
+        for record in response["data"]:
+            self.assertEqual(record["user_id"], user_id)
+
+    def test_get_login_tokens_by_user_id(self):
+        logging.debug("Running test_get_login_tokens_by_user_id")
+        # Create a user
+        create_user_response = self.__create_user("test_get_login_tokens_by_user_id", str(uuid.uuid4()), f"john_doe_{uuid.uuid4()}")
+        user_id = create_user_response["data"]["id"]
+
+        # Create a login token record for that user
+        token_request_id = str(uuid.uuid4())
+        create_token_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "create_login_tokens",
+            "data": {
+                "user_id": user_id,
+                "token": str(uuid.uuid4()),
+                "revoked": False,
+                "expires_at": "2024-01-01T12:00:00Z"
+            },
+            "comment": "test_create_login_token_for_get_by_user_id"
+        }
+        create_token_message["request_id"] = token_request_id
+        create_token_message["signature"] = self.sign_message(create_token_message)
+        create_token_response = self.send_and_receive_message(create_token_message)
+        self.assertEqual(create_token_response["status"], "success")
+
+        # Get login tokens by user_id
+        get_request_id = str(uuid.uuid4())
+        get_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "get_login_tokens_by_user_id",
+            "data": {"user_id": user_id},
+            "comment": "test_get_login_tokens_by_user_id"
+        }
+        get_message["request_id"] = get_request_id
+        get_message["signature"] = self.sign_message(get_message)
+        response = self.send_and_receive_message(get_message)
+        self.assertEqual(response["status"], "success")
+        self.assertIsInstance(response["data"], list)
+        self.assertGreaterEqual(len(response["data"]), 1)
+        for record in response["data"]:
+            self.assertEqual(record["user_id"], user_id)
 
 if __name__ == '__main__':
     unittest.main(failfast=True)

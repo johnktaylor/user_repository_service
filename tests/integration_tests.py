@@ -221,7 +221,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",  # Updated operation name
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -270,7 +270,7 @@ class TestUserRepository(unittest.TestCase):
             "operation": "create_users",
             "encrypt": True,
             "data": {
-                "username": "jane_doe",
+                "username": f"jane_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
                 "email": "jane@example.com",
                 "user_type": "human",
                 "expiry_date": "2025-01-01T00:00:00Z"
@@ -297,7 +297,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",  # Updated operation name
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -322,7 +322,7 @@ class TestUserRepository(unittest.TestCase):
             "operation": "update_users",  # Updated operation name
             "data": {
                 "id": user_id,
-                "username": "john_doe_updated",
+                "username": f"john_doe_up_{uuid.uuid4()}",  # Updated to ensure uniqueness
                 "email": "john_updated@example.com",
                 "user_type": "human",
                 "expiry_date": "2025-01-01T00:00:00Z"  # Ensure timestamp format
@@ -348,7 +348,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",  # Updated operation name
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -385,7 +385,7 @@ class TestUserRepository(unittest.TestCase):
             print(f"Error: {response_data.get('message')}, Error Code: {response_data.get('error_code')}")
         self.assertEqual(response_data["status"], "success")
 
-    def test_get_users(self):  # Updated from test_get_user
+    def test_get_users_by_id(self):  # Updated from test_get_user
         logging.debug("Running test_get_users")
         # First, create a user to retrieve
         create_request_id = str(uuid.uuid4())  # Generate unique request_id
@@ -394,7 +394,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",  # Updated operation name
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -432,7 +432,7 @@ class TestUserRepository(unittest.TestCase):
         self.assertEqual(response_data["status"], "success")
         self.assertEqual(response_data["data"]["id"], user_id)
 
-    def test_get_users_fail(self, user_id=""):
+    def test_get_users_by_id_fail(self, user_id=""):
         if user_id == "":
             user_id = str(uuid.uuid4())
 
@@ -454,7 +454,7 @@ class TestUserRepository(unittest.TestCase):
         self.assertEqual(response_data["status"], "error")
         self.assertEqual(response_data["error_code"], "NOT_FOUND")
 
-    def test_get_users_encrypted(self):
+    def test_get_users_by_id_encrypted(self):
         logging.debug("Running test_get_users_encrypted")
         # First, create a user
         create_request_id = str(uuid.uuid4())  # Generate unique request_id
@@ -464,7 +464,7 @@ class TestUserRepository(unittest.TestCase):
             "operation": "create_users",
             "encrypt": True,
             "data": {
-                "username": "jane_doe",
+                "username": f"jane_doe_{uuid.uuid4()}",
                 "email": "jane@example.com",
                 "user_type": "human",
                 "expiry_date": "2025-01-01T00:00:00Z"
@@ -519,7 +519,7 @@ class TestUserRepository(unittest.TestCase):
                         "action": "create_users",  # Updated action name
                         "data": {
                             "id": fixed_uuid,  # Specify the fixed UUID
-                            "username": "john_doe_batch",
+                            "username": f"john_doe_batch_{uuid.uuid4()}",  # Updated for uniqueness
                             "email": "john_batch@example.com",
                             "user_type": "human",
                             "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -576,7 +576,7 @@ class TestUserRepository(unittest.TestCase):
                         "action": "create_users",  # Updated action name
                         "data": {
                             "id": fixed_uuid,  # Specify the fixed UUID
-                            "username": "john_doe_batch",
+                            "username": f"john_doe_batch_{uuid.uuid4()}",  # Updated for uniqueness
                             "email": "john_batch@example.com",
                             "user_type": "human",
                             "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -610,7 +610,7 @@ class TestUserRepository(unittest.TestCase):
         logging.info("**************** Batch Operation Response: %s", response)
         print("Batch Operation Response:", response)
         self.assertEqual(response["status"], "error")
-        self.test_get_users_fail(fixed_uuid)
+        self.test_get_users_by_id_fail(fixed_uuid)
 
     def test_batch_operation_encrypted(self):
         logging.debug("Running test_batch_operation_encrypted")
@@ -628,7 +628,7 @@ class TestUserRepository(unittest.TestCase):
                         "action": "create_users",  # Updated action name
                         "data": {
                             "id": fixed_uuid,  # Specify the fixed UUID
-                            "username": "john_doe_batch_encrypted",
+                            "username": f"john_doe_batch_encrypted_{uuid.uuid4()}",  # Updated for uniqueness
                             "email": "john_batch@example.com",
                             "user_type": "human",
                             "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -708,7 +708,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -753,7 +753,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -818,7 +818,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -880,7 +880,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -943,7 +943,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -995,7 +995,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1073,7 +1073,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1142,7 +1142,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1212,7 +1212,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1263,7 +1263,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1342,7 +1342,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1410,7 +1410,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1479,7 +1479,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1528,7 +1528,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1602,7 +1602,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1668,7 +1668,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1735,7 +1735,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1780,7 +1780,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1847,7 +1847,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1909,7 +1909,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -1972,7 +1972,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -2017,7 +2017,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -2084,7 +2084,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -2146,7 +2146,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "create_users",
             "data": {
-                "username": "john_doe",
+                "username": f"john_doe_{uuid.uuid4()}",
                 "email": "john@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
@@ -2208,7 +2208,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": "2023-01-01T12:00:00+05:00",  # Timestamp in UTC+5
             "operation": "create_users",
             "data": {
-                "username": "jane_doe",
+                "username": f"jane_doe_{uuid.uuid4()}",
                 "email": "jane@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00-05:00"  # Timestamp in UTC-5
@@ -2233,7 +2233,7 @@ class TestUserRepository(unittest.TestCase):
             "timestamp": "2023-01-02T12:00:00Z",
             "operation": "create_users",
             "data": {
-                "username": "timezone_user",
+                "username": f"timezone_user_{uuid.uuid4()}",
                 "email": "timezone@example.com",
                 "user_type": "human",
                 "expiry_date": "2024-01-01T00:00:00-05:00"
@@ -2295,7 +2295,7 @@ class TestUserRepository(unittest.TestCase):
                 "action": "create_users",
                 "data": {
                     "id": user_id,
-                    "username": f"user_{i}",
+                    "username": f"user_{uuid.uuid4()}",
                     "email": f"user_{i}@example.com",
                     "user_type": "human",
                     "expiry_date": "2024-01-01T00:00:00Z"
@@ -2336,7 +2336,7 @@ class TestUserRepository(unittest.TestCase):
                     "action": "create_users",
                     "data": {
                         "id": user_id,
-                        "username": f"user_{i}",
+                        "username": f"user_{uuid.uuid4()}",
                         "email": f"user_{i}@example.com",
                         "user_type": "human",
                         "expiry_date": "2024-01-01T00:00:00Z"

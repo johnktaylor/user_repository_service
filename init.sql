@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL,
     user_type ENUM('human', 'machine') NOT NULL,
-    expiry_date TIMESTAMP
+    expiry_date TIMESTAMP,
+    UNIQUE (username)
 );
 
 CREATE TABLE IF NOT EXISTS user_details (

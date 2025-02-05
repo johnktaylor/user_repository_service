@@ -3,6 +3,8 @@
 ## Overview
 The User Repository Service manages user data and supports secure operations through cryptographic signatures and encryption. It handles CRUD operations, batch processing, and integrates with messaging systems like RabbitMQ.
 
+Please note this software is currently under heavy development.
+
 ## Features
 - **CRUD Operations:** Create, read, update, and delete user data.
 - **Batch Operations:** Execute grouped actions atomically.

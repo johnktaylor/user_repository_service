@@ -11,7 +11,7 @@ from messageprocessing.messageencryption import MessageEncryption
 from messageprocessing.messageverification import MessageVerification
 from messageprocessing.messagedatefunctions import MessageDateFunctions
 
-from sqlalchemy import create_engine, Column, String, Date, Enum, ForeignKey, JSON, Integer, Boolean, Text, TIMESTAMP
+from sqlalchemy import create_engine, Column, String, Date, Enum, ForeignKey, JSON, Integer, Boolean, Text, TIMESTAMP, UniqueConstraint
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 Base = declarative_base()
@@ -19,7 +19,7 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = 'users'
     id = Column(String(36), primary_key=True)
-    username = Column(String(255), nullable=False)
+    username = Column(String(255), nullable=False, unique=True)
     email = Column(String(255), nullable=False)
     user_type = Column(Enum('human', 'machine'), nullable=False)
     expiry_date = Column(TIMESTAMP(timezone=True))
@@ -53,6 +53,7 @@ User.webauthn_credentials = relationship("WebAuthnCredential", back_populates="u
 
 class OAuth2Signin(Base):
     __tablename__ = 'oauth2_signins'
+    __table_args__ = (UniqueConstraint('user_id', 'name', name='uq_oauth2_signins_user_id_name'),)
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     name = Column(String(50), nullable=False)
@@ -71,6 +72,7 @@ User.oauth2_signins = relationship("OAuth2Signin", back_populates="user")
 
 class PublicSshKey(Base):
     __tablename__ = 'public_ssh_keys'
+    __table_args__ = (UniqueConstraint('user_id', 'name', name='uq_public_ssh_keys_user_id_name'),)
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     name = Column(String(50), nullable=False)
@@ -88,7 +90,7 @@ class LoginToken(Base):
     __tablename__ = 'login_tokens'
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    token = Column(String(64), nullable=False, unique=True)
+    token = Column(String(64), nullable=False, unique=True, index=True)
     revoked = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     expires_at = Column(TIMESTAMP)
@@ -98,6 +100,7 @@ User.login_tokens = relationship("LoginToken", back_populates="user")
 
 class Password(Base):
     __tablename__ = 'passwords'
+    __table_args__ = (UniqueConstraint('user_id', name='uq_passwords_user_id'),)
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     password_hash = Column(String(255), nullable=False)

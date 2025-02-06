@@ -817,6 +817,8 @@ def on_request(ch, method, properties, body):
         messageencryption = MessageEncryption(settings=settings),
         messagedatefunctions = MessageDateFunctions())  # Initialize UserRepository with settings
 
+    rabbitmq_response_queue_name = rabbitmq_settings.get('response_queue_name')
+
     # Process the message
     logging.debug(f"Received message: {body}")
 
@@ -826,7 +828,7 @@ def on_request(ch, method, properties, body):
     # Send response
     ch.basic_publish(
         exchange='',
-        routing_key='user_repository_responses',
+        routing_key=rabbitmq_response_queue_name,
         properties=pika.BasicProperties(correlation_id=properties.correlation_id),
         body=response
     )
@@ -837,17 +839,20 @@ def on_request(ch, method, properties, body):
 def main():
     # Load settings once
     global settings
+    global rabbitmq_settings
     settings = load_settings('settings.yml')
     
     # RabbitMQ connection parameters
-    rabbitmq = settings.get('rabbitmq')
-    if not rabbitmq:
+    rabbitmq_settings = settings.get('rabbitmq')
+    if not rabbitmq_settings:
         print("Error: 'rabbitmq' section is missing in settings.yml")
         sys.exit(1)
     
-    rabbitmq_host = rabbitmq.get('host')
-    rabbitmq_user = rabbitmq.get('user')
-    rabbitmq_password = rabbitmq.get('password')
+    rabbitmq_host = rabbitmq_settings.get('host')
+    rabbitmq_user = rabbitmq_settings.get('user')
+    rabbitmq_password = rabbitmq_settings.get('password')
+    rabbitmq_queue_name = rabbitmq_settings.get('queue_name')
+    rabbitmq_response_queue_name = rabbitmq_settings.get('response_queue_name')
     
     if not rabbitmq_host or not rabbitmq_user or not rabbitmq_password:
         print("Error: One or more RabbitMQ configuration parameters are missing in settings.yml")
@@ -859,12 +864,12 @@ def main():
     channel = connection.channel()
     
     # Declare queues
-    channel.queue_declare(queue='user_repository')
-    channel.queue_declare(queue='user_repository_responses')
+    channel.queue_declare(queue=rabbitmq_queue_name)
+    channel.queue_declare(queue=rabbitmq_response_queue_name)
     
     # Set up consumer
     channel.basic_qos(prefetch_count=1)
-    channel.basic_consume(queue='user_repository', on_message_callback=on_request)
+    channel.basic_consume(queue=rabbitmq_queue_name, on_message_callback=on_request)
     
     print("Waiting for messages. To exit press CTRL+C")
     channel.start_consuming()

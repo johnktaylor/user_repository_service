@@ -61,9 +61,12 @@ class TestUserRepository(unittest.TestCase):
         )
         cls.channel = cls.connection.channel()
         
+        cls.rabbitmq_queue_name = rabbitmq_config.get('queue_name', 'user_repository')
+        cls.rabbitmq_response_queue_name = rabbitmq_config.get('response_queue_name', 'user_repository_responses')
+
         # Declare queues
-        cls.channel.queue_declare(queue='user_repository')
-        cls.channel.queue_declare(queue='user_repository_responses')
+        cls.channel.queue_declare(queue=cls.rabbitmq_queue_name)
+        cls.channel.queue_declare(queue=cls.rabbitmq_response_queue_name)
 
         # Initialize a dictionary to hold responses keyed by request_id
         cls.responses = {}
@@ -91,8 +94,8 @@ class TestUserRepository(unittest.TestCase):
         credentials = pika.PlainCredentials(rabbitmq['user'], rabbitmq['password'])
         connection = pika.BlockingConnection(pika.ConnectionParameters(host=rabbitmq['host'], credentials=credentials))
         channel = connection.channel()
-        channel.queue_declare(queue='user_repository_responses')
-        channel.basic_consume(queue='user_repository_responses', on_message_callback=on_response)
+        channel.queue_declare(queue=cls.rabbitmq_response_queue_name)
+        channel.basic_consume(queue=cls.rabbitmq_response_queue_name, on_message_callback=on_response)
 
         # Start consuming
         channel.start_consuming()
@@ -193,10 +196,10 @@ class TestUserRepository(unittest.TestCase):
         # Publish the message
         self.channel.basic_publish(
             exchange='',
-            routing_key='user_repository',
+            routing_key=self.rabbitmq_queue_name,
             body=json.dumps(message),
             properties=pika.BasicProperties(
-                reply_to='user_repository_responses',
+                reply_to=self.rabbitmq_response_queue_name,
                 correlation_id=request_id
             )
         )
@@ -230,7 +233,6 @@ class TestUserRepository(unittest.TestCase):
         self.assertIn("id", response["data"])
         self.assertIn("signature", response)
         return response
-
 
     def test_create_users_pass(self, testname="test_create_users_pass"):  # Updated method name from test_create_user to test_create_users
         logging.debug("Running test_create_users")

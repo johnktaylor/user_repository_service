@@ -5,6 +5,8 @@ rabbitmq:
   host: <rabbitmq_host>
   user: <rabbitmq_user>
   password: <rabbitmq_password>
+  queue_name: <rabbitmq_queue_name>
+  response_queue_name: <rabbitmq_response_queue_name>
 
 cryptography:
   private_key_paths:

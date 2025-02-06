@@ -24,6 +24,7 @@ Please note this software is currently under heavy development.
     ```
 3. **Configure Settings:**
     - Create a `settings.yml` file by copying the provided `template_for_settings.yml` and updating it with your database, cryptographic, and RabbitMQ configurations.
+    - **Note:** Verify that your cryptographic key paths and RabbitMQ details are correct. Integration tests should be executed only in a non-production environment.
 4. **Generate Cryptographic Keys:**
     To generate all required cryptographic keys, run:
     ```bash
@@ -48,7 +49,8 @@ Please note this software is currently under heavy development.
     ```bash
     python user_repository.py
     ```
-- The service listens for messages on the RabbitMQ queue `user_repository` and sends responses to the `user_repository_responses` queue.
+- The service listens for messages on the RabbitMQ queue as defined in your `settings.yml` file (using the `queue_name` key) and sends responses to the queue defined by the `response_queue_name` key.
+- **Note:** For encryption testing, ensure that your AES encryption key is 16, 24, or 32 bytes long.
 
 ## Usage
 - **Message Format:**  
@@ -75,14 +77,15 @@ Please note this software is currently under heavy development.
     ```bash
     rabbitmqadmin publish routing_key=user_repository payload='{"client_id":"client123", "request_id":"req-456", "timestamp":"2023-10-10T12:00:00Z", "operation":"create_users", "data":{"username":"jdoe", "email":"jdoe@example.com", "user_type":"human"}, "signature":"abcdef123456..."}'
     ```
+- **Encrypted Messages:**  
+  Set the `encrypt` flag to true and ensure the `data` field is AES-encrypted before sending. See the [integration_tests.py](tests/integration_tests.py) file for practical examples.
   
 - **Expected Response:**  
   The service processes the message and sends a response (which includes status, message, and a new signature) to the `user_repository_responses` queue.
 
 ### Additional Development Details
 
-A good point of reference for how to use the service programmatically would be integration_tests.py, please
-do not run the integration tests in a production environment.
+A good point of reference for how to use the service programmatically would be the `integration_tests.py` file—please do not run the integration tests in a production environment.
 
 ## Testing
 - **Running Unit and Integration Tests:**
@@ -104,7 +107,17 @@ do not run the integration tests in a production environment.
 ### Message Encryption
 - When the `encrypt` flag is set to true, the `data` field is encrypted using AES symmetric encryption in CBC mode.
 - A securely generated symmetric key is used for encryption and stored separately.
+- **Important:** Ensure your encryption key is either 16, 24, or 32 bytes long.
 - Encrypted messages are decrypted by the service before processing, ensuring data confidentiality.
+
+## Troubleshooting
+- **Common Issues:**
+  - **Signature Verification Fails:**  
+    Ensure that the message is signed correctly over all fields except the `signature`, and that the correct RSA private key is used.
+  - **Decryption Errors:**  
+    Verify that the `encrypt` flag is set correctly and that your encryption key is of the proper length (16, 24, or 32 bytes). Also, check that the key paths in your settings file are accurate.
+  - **Database or RabbitMQ Connection Problems:**  
+    Confirm that the configurations in your `settings.yml` file for the database and RabbitMQ are correct and that the corresponding services are running.
 
 ## Contributing
 Contributions are welcome! Please follow these steps:

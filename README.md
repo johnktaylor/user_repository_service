@@ -1,16 +1,19 @@
 # User Repository Service
 
 ## Overview
-The User Repository Service manages user data and supports secure operations through cryptographic signatures and encryption. It handles CRUD operations, batch processing, and integrates with messaging systems like RabbitMQ.
+The User Repository Service manages user data and provides secure operations through cryptographic signing, verification, and AES encryption. It supports CRUD operations, batch processing, and integrates with RabbitMQ for asynchronous message handling. The service is capable of performing a Diffie-Hellman key exchange to derive a shared symmetric key for optional message encryption.
 
-Please note this software is currently under heavy development.
+Please note this software is under active development.
 
 ## Features
-- **CRUD Operations:** Create, read, update, and delete user data.
-- **Batch Operations:** Execute grouped actions atomically.
-- **Secure Communication:** Utilizes digital signatures and AES encryption.
-- **Message Processing:** Supports JSON-based messaging with RabbitMQ integration.
-- **Testing:** Includes unit and integration tests for continuous validation.
+- **CRUD Operations:** Create, read, update, and delete user records and associated details.
+- **Batch Operations:** Execute grouped actions atomically, with support for both plain and encrypted messages.
+- **Secure Communication:** 
+  - **Message Signing and Verification:** Uses RSA with PKCS#1 v1.5 padding and SHA-256 hashing to sign messages. All messages include a `signature` field which the service validates against public keys stored in the configured `public_keys_dir`.
+  - **Key Exchange:** Supports a key exchange process via the `key_exchange_request` operation, allowing clients and the service to derive an AES encryption key.
+  - **Message Encryption:** Optionally encrypt message payloads using AES in CBC mode when the `encrypt` flag is set. The symmetric key is obtained from the Diffie-Hellman key exchange.
+- **Message Processing:** Accepts JSON-based messages with fields like `client_id`, `request_id`, `timestamp`, `operation`, and `data`. 
+- **Testing:** Includes both unit and integration tests, including tests for encryption workflows. **Integration tests should not be run in a production environment.**
 
 ## Setup
 1. **Clone the Repository:**
@@ -24,21 +27,18 @@ Please note this software is currently under heavy development.
     ```
 3. **Configure Settings:**
     - Create a `settings.yml` file by copying the provided `template_for_settings.yml` and updating it with your database, cryptographic, and RabbitMQ configurations.
-    - **Note:** Verify that your cryptographic key paths and RabbitMQ details are correct. Integration tests should be executed only in a non-production environment.
+    - **Important:** Ensure that your cryptographic key paths (including the `public_keys_dir`) and RabbitMQ settings are correctly configured. If applicable, also update the `encryption_key_path`.
 4. **Generate Cryptographic Keys:**
-    To generate all required cryptographic keys, run:
-    ```bash
-    python generate_keys.py --regenerate-all-keys
-    ```
-    You can also perform individual key operations:
-    - **Regenerate only signing keys:**
+    The repository uses RSA keys for signing messages and supports AES encryption derived from a Diffie-Hellman key exchange.
+    - To regenerate all signing keys, run:
       ```bash
-      python generate_keys.py --regenerate-signing-keys-only
+      python generate_keys.py --regenerate-all-signing-keys
       ```
-    - **Regenerate only the encryption key:**
+    - To delete all signing keys without regenerating them, run:
       ```bash
-      python generate_keys.py --regenerate-encryption-key-only
+      python generate_keys.py --delete-all-signing-keys
       ```
+    - You can also perform individual key operations as needed.
 5. **Initialize the Database:**
     ```bash
     mysql -u your_db_user -p < init.sql
@@ -49,43 +49,78 @@ Please note this software is currently under heavy development.
     ```bash
     python user_repository.py
     ```
-- The service listens for messages on the RabbitMQ queue as defined in your `settings.yml` file (using the `queue_name` key) and sends responses to the queue defined by the `response_queue_name` key.
-- **Note:** For encryption testing, ensure that your AES encryption key is 16, 24, or 32 bytes long.
+- The service listens on the RabbitMQ queue specified by `queue_name` in your `settings.yml` and sends responses to the queue defined by `response_queue_name`.
 
 ## Usage
-- **Message Format:**  
-  The service expects JSON messages with fields like `client_id`, `request_id`, `timestamp`, `operation`, and optionally `data`, `signature`, and an `encrypt` flag.
+- **Message Format:**
+  The service expects JSON messages containing the following fields:
+  - `client_id`: Unique identifier for the client.
+  - `request_id`: Unique identifier for each request.
+  - `timestamp`: ISO 8601 formatted timestamp.
+  - `operation`: The operation to perform, such as `create_users`, `update_users`, `delete_users`, `get_users`, `batch_operations`, or `key_exchange_request`.
+  - `data`: A dictionary containing the required details for the operation.
+  - `signature`: Hexadecimal representation of the cryptographic signature (computed over all fields except the signature itself).
+  - Optional `encrypt` flag (Boolean): Set to `true` if the `data` field is AES-encrypted.
   
-- **Example Message:**  
-    ```json
-    {
-      "client_id": "client123",
-      "request_id": "req-456",
-      "timestamp": "2023-10-10T12:00:00Z",
-      "operation": "create_users",
-      "data": {
-         "username": "jdoe",
-         "email": "jdoe@example.com",
-         "user_type": "human"
-      },
-      "signature": "abcdef123456..."
-    }
-    ```
+  **Example Message (Unencrypted):**
+  ```json
+  {
+    "client_id": "client123",
+    "request_id": "req-456",
+    "timestamp": "2023-10-10T12:00:00Z",
+    "operation": "create_users",
+    "data": {
+      "username": "jdoe",
+      "email": "jdoe@example.com",
+      "user_type": "human"
+    },
+    "signature": "abcdef123456..."
+  }
+  ```
   
-- **Sending a Message:**  
-  You can publish messages to the `user_repository` queue using any RabbitMQ client or command-line tool. For example, using `rabbitmqadmin`:
-    ```bash
-    rabbitmqadmin publish routing_key=user_repository payload='{"client_id":"client123", "request_id":"req-456", "timestamp":"2023-10-10T12:00:00Z", "operation":"create_users", "data":{"username":"jdoe", "email":"jdoe@example.com", "user_type":"human"}, "signature":"abcdef123456..."}'
-    ```
-- **Encrypted Messages:**  
-  Set the `encrypt` flag to true and ensure the `data` field is AES-encrypted before sending. See the [integration_tests.py](tests/integration_tests.py) file for practical examples.
-  
-- **Expected Response:**  
-  The service processes the message and sends a response (which includes status, message, and a new signature) to the `user_repository_responses` queue.
+  **Example Encrypted Batch Operation:**
+  ```json
+  {
+    "client_id": "client123",
+    "request_id": "req-789",
+    "timestamp": "2023-10-10T12:00:00Z",
+    "operation": "batch_operations",
+    "encrypt": true,
+    "data": "<AES Encrypted JSON string containing batch actions>",
+    "signature": "abcdef123456..."
+  }
+  ```
+  - **Key Exchange:**  
+    To secure subsequent communications, a client performs a `key_exchange_request` to send its Diffie-Hellman public key. The service responds with its public key so that both parties can derive a shared AES encryption key.
 
-### Additional Development Details
+- **Supported Operations:**
+  - **Create Operations:** e.g., `create_users`, `create_user_details`, etc.
+  - **Update Operations:** e.g., `update_users`, `update_user_details`, `update_webauthn_credentials`, `update_oauth2_signins`, `update_public_ssh_keys`, `update_login_tokens`, etc.
+  - **Delete Operations:** e.g., `delete_users`, etc.
+  - **Get Operations:** e.g., `get_users`, etc.
+  - **Batch Operations:** Execute multiple sub-actions atomically by sending a `batch_operations` message.
+  - **Key Exchange:** Initiated using the `key_exchange_request` operation.
 
-A good point of reference for how to use the service programmatically would be the `integration_tests.py` file—please do not run the integration tests in a production environment.
+## Example Interactions
+For practical examples on how to interact with the service programmatically, please refer to:
+- [integration_tests.py](tests/integration_tests.py): Demonstrates various operations including create, update, delete, get, and batch operations.
+- [integration_tests_encryption.py](tests/integration_tests_encryption.py): Provides examples on performing key exchange and handling encrypted messages.
+
+These files serve as a valuable reference for understanding the message format, operation calls, and both unencrypted and encrypted interactions with the service.
+
+## Advanced Message Security Details
+
+### Message Signing
+- Every message must include a valid `signature` generated using the client's RSA private key.
+- The signature is computed over all message fields (excluding the `signature` field itself) using PKCS#1 v1.5 padding with SHA-256.
+- The service verifies the signature by loading available public keys from the specified `public_keys_dir`.
+
+### Message Encryption and Key Exchange
+- **Encryption:**  
+  When the `encrypt` flag is `true`, the `data` field must be encrypted using AES in CBC mode. The encryption and decryption functions are designed to work with the symmetric key derived from the key exchange.
+  
+- **Key Exchange:**  
+  Clients initiate a secure channel by sending a `key_exchange_request` message containing their Diffie-Hellman public key. The service replies with its own public key. Both parties then use the exchange to derive a shared symmetric AES key for encrypting subsequent messages.
 
 ## Testing
 - **Running Unit and Integration Tests:**
@@ -96,34 +131,21 @@ A good point of reference for how to use the service programmatically would be t
 - **Important:**  
   Ensure your `settings.yml` is correctly configured. **Integration tests should not be run in a production environment.**
 
-## Advanced Message Security Details
-
-### Message Signing
-- Every message must include a valid `signature` field.
-- The signature is generated using the RSA private key with PKCS#1 v1.5 padding and SHA-256 hashing.
-- The signature is computed over all message fields except the `signature` field.
-- Upon receipt, the service verifies the signature against available RSA public keys. Failure in verification results in an error response.
-
-### Message Encryption
-- When the `encrypt` flag is set to true, the `data` field is encrypted using AES symmetric encryption in CBC mode.
-- A securely generated symmetric key is used for encryption and stored separately.
-- **Important:** Ensure your encryption key is either 16, 24, or 32 bytes long.
-- Encrypted messages are decrypted by the service before processing, ensuring data confidentiality.
-
 ## Troubleshooting
-- **Common Issues:**
-  - **Signature Verification Fails:**  
-    Ensure that the message is signed correctly over all fields except the `signature`, and that the correct RSA private key is used.
-  - **Decryption Errors:**  
-    Verify that the `encrypt` flag is set correctly and that your encryption key is of the proper length (16, 24, or 32 bytes). Also, check that the key paths in your settings file are accurate.
-  - **Database or RabbitMQ Connection Problems:**  
-    Confirm that the configurations in your `settings.yml` file for the database and RabbitMQ are correct and that the corresponding services are running.
+- **Signature Verification Fails:**  
+  Ensure that the message is correctly signed (excluding the `signature` field) using the proper RSA private key.
+- **Decryption Errors:**  
+  Verify that the `encrypt` flag is set appropriately and that the Diffie-Hellman key exchange has successfully provided a symmetric key. Also, confirm that the key length is valid.
+- **Configuration and Connection Issues:**  
+  Confirm that the database and RabbitMQ configurations in `settings.yml` are correct and that the corresponding services are running.
+- **Timestamp Format:**  
+  Timestamps must follow the ISO 8601 standard. Timestamps lacking timezone info default to UTC.
 
 ## Contributing
 Contributions are welcome! Please follow these steps:
 1. Fork the repository.
 2. Create a new feature branch.
-3. Commit your changes with clear messages.
+3. Commit your changes with descriptive messages.
 4. Open a pull request describing your changes.
 
 ## License

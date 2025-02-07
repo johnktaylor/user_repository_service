@@ -15,18 +15,18 @@ def load_settings(yaml_path):
     with open(yaml_path, 'r') as file:
         return yaml.safe_load(file)
 
-def delete_keys(private_key_path, public_key_path):
+def delete_service_private_and_public_keys(private_key_path, public_key_path):
     if os.path.isfile(private_key_path):
         os.remove(private_key_path)
     if os.path.isfile(public_key_path):
         os.remove(public_key_path)
 
-def delete_public_keys(public_keys_dir):
+def delete_client_public_signing_keys_in_dir(public_keys_dir):
     public_keys = Path(public_keys_dir).glob("*.pem")
     for key in public_keys:
         key.unlink()
 
-def generate_keys(private_key_path, public_key_path):
+def generate_private_and_public_keys(private_key_path, public_key_path):
     Path(private_key_path).parent.mkdir(parents=True, exist_ok=True)
     Path(public_key_path).parent.mkdir(parents=True, exist_ok=True)
     
@@ -67,46 +67,21 @@ def generate_key_pair():
     }
     return private_key, public_key, metadata
 
-def generate_symmetric_key(encryption_key_path):
-    """
-    Generate a symmetric AES key for message encryption.
-    """
-    from cryptography.hazmat.primitives import serialization  # Existing import
-
-    key = os.urandom(32)  # Added: Generate a 256-bit AES key using os.urandom
-    Path(encryption_key_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(encryption_key_path, 'wb') as key_file:
-        key_file.write(key)
-    print(f"Symmetric encryption key generated at: {encryption_key_path}")
-
-def delete_symmetric_key(encryption_key_path):
-    """
-    Delete the symmetric AES key used for message encryption.
-    """
-    if os.path.isfile(encryption_key_path):
-        os.remove(encryption_key_path)
-        print(f"Symmetric encryption key deleted from: {encryption_key_path}")
-
 def delete_all_signing_keys(private_keys, public_keys):
     for service in private_keys:
-        delete_keys(private_keys[service], public_keys[service])
+        delete_service_private_and_public_keys(private_keys[service], public_keys[service])
 
 def regenerate_all_keys(private_keys, public_keys, public_keys_dir, encryption_key_path, services):
     delete_all_signing_keys(private_keys, public_keys)
-    delete_public_keys(public_keys_dir)
+    delete_client_public_signing_keys_in_dir(public_keys_dir)
     for service in services:
-        generate_keys(private_keys[service], public_keys[service])
+        generate_private_and_public_keys(private_keys[service], public_keys[service])
         copy_public_keys(public_keys[service], service, public_keys_dir)  # Copy public key after generation
-    generate_symmetric_key(encryption_key_path)
 
 def main():
     parser = argparse.ArgumentParser(description="Generate or delete cryptographic keys.")
-    parser.add_argument('--regenerate-all-keys', action='store_true', help='Delete existing keys and regenerate them.')
-    parser.add_argument('--delete-all-keys-only', action='store_true', help='Only delete all keys and exit.')
-    parser.add_argument('--delete-signing-keys-only', action='store_true', help='Delete only the message signing keys.')
-    parser.add_argument('--delete-encryption-key-only', action='store_true', help='Delete only the symmetric encryption key.')  # Added
-    parser.add_argument('--regenerate-signing-keys-only', action='store_true', help='Regenerate only the message signing keys.')  # Added
-    parser.add_argument('--regenerate-encryption-key-only', action='store_true', help='Regenerate only the symmetric encryption key.')  # Added
+    parser.add_argument('--regenerate-all-signing-keys', action='store_true', help='Delete existing keys and regenerate them.')
+    parser.add_argument('--delete-all-signing-keys', action='store_true', help='Only delete all keys and exit.')
     args = parser.parse_args()
 
     settings = load_settings('settings.yml')
@@ -123,29 +98,14 @@ def main():
     public_keys_dir = cryptography.get('public_keys_dir')
     encryption_key_path = cryptography.get('encryption_key_path')  # Added
     
-    if args.regenerate_all_keys or args.delete_all_keys_only or args.delete_signing_keys_only or args.delete_encryption_key_only or args.regenerate_signing_keys_only or args.regenerate_encryption_key_only:
-        if args.regenerate_all_keys:
+    if args.regenerate_all_signing_keys or args.delete_all_signing_keys:
+        if args.regenerate_all_signing_keys:
             regenerate_all_keys(private_keys, public_keys, public_keys_dir, encryption_key_path, services)
-        elif args.delete_all_keys_only:
+            sys.exit(0)
+
+        elif args.delete_all_signing_keys:
             delete_all_signing_keys(private_keys, public_keys)
-            delete_public_keys(public_keys_dir)
-            delete_symmetric_key(encryption_key_path)
-            sys.exit(0)
-        elif args.delete_signing_keys_only:
-            delete_all_signing_keys(private_keys, public_keys)
-            sys.exit(0)
-        elif args.delete_encryption_key_only:
-            delete_symmetric_key(encryption_key_path)
-            sys.exit(0)
-        elif args.regenerate_signing_keys_only:
-            delete_all_signing_keys(private_keys, public_keys)
-            for service in services:
-                generate_keys(private_keys[service], public_keys[service])
-                copy_public_keys(public_keys[service], service, public_keys_dir)  # Copy public key after generation
-            sys.exit(0)
-        elif args.regenerate_encryption_key_only:
-            delete_symmetric_key(encryption_key_path)
-            generate_symmetric_key(encryption_key_path)
+            delete_client_public_signing_keys_in_dir(public_keys_dir)
             sys.exit(0)
     
     # Added: Check existence of keys when no options are specified
@@ -159,9 +119,6 @@ def main():
         for service, path in public_keys.items():
             if not os.path.isfile(path):
                 missing_keys.append(f"Missing Public Message Signing Key for {service}: {path}")
-        # Check encryption key
-        if not os.path.isfile(encryption_key_path):
-            missing_keys.append(f"Missing Message Encryption Key: {encryption_key_path}")
         
         if missing_keys:
             print("The following key(s) are missing:")

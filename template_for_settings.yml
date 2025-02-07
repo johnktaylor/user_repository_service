@@ -18,4 +18,3 @@ cryptography:
     integration_tests: <path/to/integration_tests/public_key.pem>
     unit_tests: <path/to/unit_tests/public_key.pem>
   public_keys_dir: <path/to/public_keys_directory>
-  encryption_key_path: <path/to/encryption_key.bin>

@@ -12,7 +12,7 @@ from messageprocessing.messageverification import MessageVerification
 from messageprocessing.messagedatefunctions import MessageDateFunctions
 
 from sqlalchemy import create_engine, Column, String, Date, Enum, ForeignKey, JSON, Integer, Boolean, Text, TIMESTAMP, UniqueConstraint
-from sqlalchemy.orm import sessionmaker, declarative_base, relationship
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
 
 Base = declarative_base()
 
@@ -153,8 +153,7 @@ class UserRepository:
             raise ValueError("Error: 'database' section is missing in settings.yml")
         
         self.engine = create_engine(self.db_config.get('connection_string'), echo=False)
-        Session = sessionmaker(bind=self.engine)
-        self.session = Session()
+        self.sessionmaker = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
 
         # Add a mapping from table names to model classes
@@ -167,10 +166,6 @@ class UserRepository:
             'login_tokens': LoginToken,
             'passwords': Password
         }
-
-        # Load the symmetric encryption key
-        with open(settings['cryptography']['encryption_key_path'], 'rb') as key_file:
-            self.encryption_key = key_file.read()
 
     def verify_signature(self, signaturestring, message: Dict[str, Any]) -> bool:
         """
@@ -208,7 +203,7 @@ class UserRepository:
         """
         return self.messagedatefunctions.parse_timestamp(timestamp_str)
         
-    def encrypt_data(self, plaintext: str) -> str:
+    def encrypt_data(self, plaintext: str, client_id: str) -> str:
         """
         Encrypts the plaintext using AES CBC mode.
 
@@ -218,9 +213,9 @@ class UserRepository:
         Returns:
             str: The base64-encoded ciphertext.
         """
-        return self.messageencryption.encrypt_data(plaintext)
+        return self.messageencryption.encrypt_data(plaintext, client_id)
 
-    def decrypt_data(self, ciphertext_b64: str) -> str:
+    def decrypt_data(self, ciphertext_b64: str, client_id: str) -> str:
         """
         Decrypts the base64-encoded ciphertext using AES CBC mode.
 
@@ -230,7 +225,51 @@ class UserRepository:
         Returns:
             str: The decrypted plaintext.
         """
-        return self.messageencryption.decrypt_data(ciphertext_b64)
+        return self.messageencryption.decrypt_data(ciphertext_b64, client_id)
+    
+    def _generate_response(self, original_message: Dict[str, Any], operation: str, status: str, message: str, data: Dict[str, Any] = None, error_code: str = None) -> str:
+        """
+        Generate a response message (common logic).
+        """
+        response = {
+            "client_id": original_message.get("client_id"),
+            "request_id": original_message.get("request_id"),
+            "original_timestamp": original_message.get("timestamp"),
+            "response_timestamp": datetime.utcnow().isoformat() + "Z",
+            "operation": operation,
+            "status": status,
+            "message": message,
+        }
+
+        if data:
+            response["data"] = data
+        if error_code:
+            response["error_code"] = error_code
+
+        response['signature'] = self.sign_message(response)
+        logging.debug(f"Response generated: {response}")
+        return json.dumps(response, default=str)  # Added default=str to handle date serialization
+
+    def handle_key_exchange_request(self, data: Dict[str, Any], original_message: Dict[str, Any]) -> str:
+        """
+        Handle key exchange request.
+        """
+        try:
+            public_key = self.messageencryption.handle_key_exchange(data, original_message)
+            return self._generate_response(
+                original_message, 
+                "key_exchange_response", 
+                "success", 
+                "Key exchange request completed successfully", 
+                data={"server_public_key": public_key})
+        except Exception as e:
+            return self._generate_response(
+                original_message, 
+                "key_exchange_response", 
+                "error", 
+                "Key exchange request failed", 
+                error_code="KEY_EXCHANGE_FAILED"
+            )
 
     def handle_message(self, message_str: str) -> str:
         """
@@ -271,7 +310,7 @@ class UserRepository:
             print(f"Encrypted Message Received: {parsed_message}")
             encrypted_data = parsed_message.get('data')
             try:
-                decrypted_data = self.decrypt_data(encrypted_data)
+                decrypted_data = self.decrypt_data(encrypted_data, parsed_message.get("client_id"))
                 parsed_message['data'] = json.loads(decrypted_data)
                 print(f"Decrypted message: {parsed_message}")
             except Exception as e:
@@ -282,21 +321,26 @@ class UserRepository:
         except ValueError:
             return json.dumps({"status": "error", "message": "Invalid timestamp format"})
 
+        session = self.sessionmaker()
+
         try:
             operation = parsed_message.get('operation')
             logging.info(f"\n########################## Handling message: {operation} ########################\n")
             data = parsed_message.get('data', {})
 
-            if operation == 'batch_operations':
-                response = self.handle_batch_operation(data, parsed_message)
+            if operation == 'key_exchange_request':
+                print(f"*************Key exchange request received:************** {data} *****************")
+                response = self.handle_key_exchange_request(data, parsed_message)
+            elif operation == 'batch_operations':
+                response = self.handle_batch_operation(data, parsed_message, session=session)
             elif operation.startswith('create_'):
-                response = self.create_record(operation, data, parsed_message)
+                response = self.create_record(operation, data, parsed_message, session=session)
             elif operation.startswith('update_'):
-                response = self.update_record(operation, data, parsed_message)
+                response = self.update_record(operation, data, parsed_message, session=session)
             elif operation.startswith('delete_'):
-                response = self.delete_record(operation, data, parsed_message)
+                response = self.delete_record(operation, data, parsed_message, session=session)
             elif operation.startswith('get_'):
-                response = self.get_record(operation, data, parsed_message)
+                response = self.get_record(operation, data, parsed_message, session=session)
             else:
                 response = self._generate_response(
                     parsed_message, 
@@ -327,38 +371,17 @@ class UserRepository:
         
         if parsed_message.get('encrypt'):
             response_data = json.loads(response).get('data')
-            encrypted_response_data = self.encrypt_data(json.dumps(response_data))
+            encrypted_response_data = self.encrypt_data(json.dumps(response_data), parsed_message.get("client_id"))
             response = json.loads(response)
             response['data'] = encrypted_response_data
             response = json.dumps(response)
 
         logging.info(f"\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Response: {response}!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
+        session.close()
         return response
 
-    def _generate_response(self, original_message: Dict[str, Any], operation: str, status: str, message: str, data: Dict[str, Any] = None, error_code: str = None) -> str:
-        """
-        Generate a response message (common logic).
-        """
-        response = {
-            "client_id": original_message.get("client_id"),
-            "request_id": original_message.get("request_id"),
-            "original_timestamp": original_message.get("timestamp"),
-            "response_timestamp": datetime.utcnow().isoformat() + "Z",
-            "operation": operation,
-            "status": status,
-            "message": message,
-        }
 
-        if data:
-            response["data"] = data
-        if error_code:
-            response["error_code"] = error_code
-
-        response['signature'] = self.sign_message(response)
-        logging.debug(f"Response generated: {response}")
-        return json.dumps(response, default=str)  # Added default=str to handle date serialization
-
-    def handle_batch_operation(self, data: Dict[str, Any], original_message: Dict[str, Any]) -> str:
+    def handle_batch_operation(self, data: Dict[str, Any], original_message: Dict[str, Any], session: Session) -> str:
         """
         Handle batch operations for create, update, and delete actions.
 
@@ -372,32 +395,32 @@ class UserRepository:
         results = []
         try:
             logging.debug("Starting batch operation")
-            self.session.begin()
+            session.begin()
             for action in data.get("actions", []):
                 action_type = action.get("action")
                 action_data = action.get("data", {})
                 
                 if action_type.startswith('create_'):
-                    result = self.create_record(action_type, action_data, original_message, batch=True)
+                    result = self.create_record(action_type, action_data, original_message, session=session, batch=True)
                 elif action_type.startswith('update_'):
-                    result = self.update_record(action_type, action_data, original_message, batch=True)
+                    result = self.update_record(action_type, action_data, original_message, session=session, batch=True)
                 elif action_type.startswith('delete_'):
-                    result = self.delete_record(action_type, action_data, original_message, batch=True)
+                    result = self.delete_record(action_type, action_data, original_message, session=session, batch=True)
                 else:
                     result = self._generate_response(original_message, action_type, "error", f"Unknown batch action: {action_type}", error_code="UNKNOWN_BATCH_ACTION")
                 results.append(json.loads(result))
                 if json.loads(result).get('status') == 'error':
-                    self.session.rollback()
+                    session.rollback()
                     logging.warning(f"Batch operation rolled back due to error in: {action_type}")
                     return self._generate_response(original_message, "batch_operation", "error", "Batch operation failed", error_code="BATCH_OPERATION_FAILED")
 
-            self.session.commit()
+            session.commit()
             logging.info("Batch operation completed successfully")
             response_data = {"results": results}
             response = self._generate_response(original_message, "batch_operation", "success", "Batch operation completed successfully", data=response_data)
         
         except Exception as e:
-            self.session.rollback()
+            session.rollback()
             logging.error(f"Batch operation failed: {e}")
             response = self._generate_response(original_message, "batch_operation", "error", str(e), error_code="BATCH_OPERATION_FAILED")
         
@@ -439,7 +462,7 @@ class UserRepository:
             raise ValueError(f"No model found for table: {table_name}")
         return model
 
-    def create_record(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+    def create_record(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], session: Session, batch: bool = False) -> str:
         """
         Create a new record in the specified table.
 
@@ -472,9 +495,9 @@ class UserRepository:
         try:
             logging.debug(f"Creating record in table: {model.__tablename__}")
             new_record = model(**data)
-            self.session.add(new_record)
+            session.add(new_record)
             if not batch:
-                self.session.commit()
+                session.commit()
             response_data = {primary_key_field: new_record.id}
             response = self._generate_response(
                 original_message,
@@ -486,7 +509,7 @@ class UserRepository:
             logging.info(f"Record created successfully in table: {model.__tablename__}")
         except Exception as e:
             logging.error(f"Error during create operation on table {model.__tablename__}: {e}")
-            self.session.rollback()
+            session.rollback()
             response = self._generate_response(
                 original_message,
                 operation,
@@ -496,7 +519,7 @@ class UserRepository:
             )
         return response
 
-    def update_record(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+    def update_record(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], session: Session, batch: bool = False) -> str:
         """
         Update an existing record in the specified table.
 
@@ -526,19 +549,19 @@ class UserRepository:
         
         try:
             logging.debug(f"Updating record in table: {model.__tablename__} with id: {id}")
-            record = self.session.query(model).filter_by(id=id).first()
+            record = session.query(model).filter_by(id=id).first()
             if not record:
                 logging.warning(f"Record not found in table {model.__tablename__} with id: {id}")
                 return self._generate_response(original_message, operation, "error", "Record not found", error_code="NOT_FOUND")
             for key, value in data.items():
                 setattr(record, key, value)
             if not batch:
-                self.session.commit()
+                session.commit()
             response = self._generate_response(original_message, operation, "success", f"{operation.replace('_', ' ').capitalize()} successfully", data={"id": id})
             logging.info(f"Record updated successfully in table: {model.__tablename__}")
         except Exception as e:
             logging.error(f"Error during update operation on table {model.__tablename__}: {e}")
-            self.session.rollback()
+            session.rollback()
             response = self._generate_response(
                 original_message,
                 operation,
@@ -548,7 +571,7 @@ class UserRepository:
             )
         return response
 
-    def delete_record(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+    def delete_record(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], session: Session, batch: bool = False) -> str:
         """
         Delete a record from the specified table.
 
@@ -568,18 +591,18 @@ class UserRepository:
             return self._generate_response(original_message, operation, "error", "Missing ID for delete", error_code="MISSING_ID")
         try:
             logging.debug(f"Deleting record from table: {model.__tablename__} with id: {id}")
-            record = self.session.query(model).filter_by(id=id).first()
+            record = session.query(model).filter_by(id=id).first()
             if not record:
                 logging.warning(f"Record not found in table {model.__tablename__} with id: {id}")
                 return self._generate_response(original_message, operation, "error", "Record not found", error_code="NOT_FOUND")
-            self.session.delete(record)
+            session.delete(record)
             if not batch:
-                self.session.commit()
+                session.commit()
             response = self._generate_response(original_message, operation, "success", f"{operation.replace('_', ' ').capitalize()} successfully", data={"id": id})
             logging.info(f"Record deleted successfully from table: {model.__tablename__}")
         except Exception as e:
             logging.error(f"Error during delete operation on table {model.__tablename__}: {e}")
-            self.session.rollback()
+            session.rollback()
             response = self._generate_response(
                 original_message,
                 operation,
@@ -589,7 +612,7 @@ class UserRepository:
             )
         return response
 
-    def get_record_by_id(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+    def get_record_by_id(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], session: Session, batch: bool = False) -> str:
         """
         Retrieve a record from the specified table by ID.
 
@@ -609,7 +632,7 @@ class UserRepository:
             return self._generate_response(original_message, operation, "error", "Missing ID for get", error_code="MISSING_ID")
         try:
             logging.debug(f"Retrieving record from table: {model.__tablename__} with id: {id}")
-            record = self.session.query(model).filter_by(id=id).first()
+            record = session.query(model).filter_by(id=id).first()
             if not record:
                 logging.warning(f"Record not found in table {model.__tablename__} with id: {id}")
                 return self._generate_response(original_message, operation, "error", "Record not found", error_code="NOT_FOUND")
@@ -634,7 +657,7 @@ class UserRepository:
             )
         return response
 
-    def get_record_by_user_id(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+    def get_record_by_user_id(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], session: Session, batch: bool = False) -> str:
         """
         Retrieve a record from the specified table by ID.
 
@@ -654,7 +677,7 @@ class UserRepository:
             return self._generate_response(original_message, operation, "error", "Missing user_id for get", error_code="MISSING_USER_ID")
         try:
             logging.debug(f"Retrieving record from table: {model.__tablename__} with user_id: {searchparam}")
-            records = self.session.query(model).filter_by(user_id=searchparam).all()
+            records = session.query(model).filter_by(user_id=searchparam).all()
             if not records:
                 logging.warning(f"Records not found in table {model.__tablename__} with user_id: {searchparam}")
                 return self._generate_response(original_message, operation, "error", "Records not found", error_code="NOT_FOUND")
@@ -684,7 +707,7 @@ class UserRepository:
             )
         return response
 
-    def get_users_by_username(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+    def get_users_by_username(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], session: Session, batch: bool = False) -> str:
         """
         Retrieve a user record from the users table by username.
 
@@ -704,7 +727,7 @@ class UserRepository:
             return self._generate_response(original_message, operation, "error", "Missing username for get", error_code="MISSING_USERNAME")
         try:
             logging.debug(f"Retrieving record from table: {model.__tablename__} with username: {searchparam}")
-            record = self.session.query(model).filter_by(username=searchparam).first()
+            record = session.query(model).filter_by(username=searchparam).first()
             if not record:
                 logging.warning(f"Record not found in table {model.__tablename__} with username: {searchparam}")
                 return self._generate_response(original_message, operation, "error", "Record not found", error_code="NOT_FOUND")
@@ -729,7 +752,7 @@ class UserRepository:
             )
         return response
         
-    def get_record(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], batch: bool = False) -> str:
+    def get_record(self, operation: str, data: Dict[str, Any], original_message: Dict[str, Any], session: Session, batch: bool = False) -> str:
         """
         Retrieve a record from the specified table.
 
@@ -743,11 +766,12 @@ class UserRepository:
             str: The JSON-encoded response.
         """
         if operation == 'get_users_by_username':
-            return self.get_users_by_username(operation, data, original_message, batch)
+            return self.get_users_by_username(operation, data, original_message, session=session, batch=batch)
         elif operation.endswith('by_user_id'):
-            return self.get_record_by_user_id(operation, data, original_message, batch)
+            return self.get_record_by_user_id(operation, data, original_message, session=session, batch=batch)
         else:
-            return self.get_record_by_id(operation, data, original_message, batch)
+            return self.get_record_by_id(operation, data, original_message, session=session, batch=batch)
+
 
 
     def get_table_name(self, operation: str) -> str:
@@ -811,11 +835,7 @@ def load_settings(file_path):
     return settings
 
 def on_request(ch, method, properties, body):
-    user_repository = UserRepository(
-        settings=settings, 
-        messageverification = MessageVerification(settings=settings),
-        messageencryption = MessageEncryption(settings=settings),
-        messagedatefunctions = MessageDateFunctions())  # Initialize UserRepository with settings
+# Initialize UserRepository with settings
 
     rabbitmq_response_queue_name = rabbitmq_settings.get('response_queue_name')
 
@@ -840,11 +860,21 @@ def main():
     # Load settings once
     global settings
     global rabbitmq_settings
+    global user_repository
+    # Load settings from settings.yml
+
     settings = load_settings('settings.yml')
-    
+
+    user_repository = UserRepository(
+        settings=settings, 
+        messageverification = MessageVerification(settings=settings),
+        messageencryption = MessageEncryption(settings=settings),
+        messagedatefunctions = MessageDateFunctions())  # Initialize UserRepository with settings
+
     # RabbitMQ connection parameters
     rabbitmq_settings = settings.get('rabbitmq')
     if not rabbitmq_settings:
+
         print("Error: 'rabbitmq' section is missing in settings.yml")
         sys.exit(1)
     

@@ -19,8 +19,7 @@ class MessageVerification():
         if not private_key_path or not public_key_path:
             raise ValueError("Error: One or more cryptographic key paths are missing in settings.yml")
         
-        self.private_key = self.__load_private_key(private_key_path)
-        self.public_key = self.__load_public_key(public_key_path)
+        self.private_signing_key = self.__load_private_key(private_key_path)
 
     def __load_private_key(self, path: str):
         """
@@ -39,25 +38,6 @@ class MessageVerification():
                     password=None,
                 )
             return private_key  # Ensure 'private_key' is returned
-        except Exception as e:
-            raise
-
-    def __load_public_key(self, path: str):
-        """
-        Load the public key from the specified file.
-
-        Args:
-            path (str): Path to the public key file.
-
-        Returns:
-            Public key object.
-        """
-        try:
-            with open(path, 'rb') as key_file:
-                public_key = serialization.load_pem_public_key(
-                    key_file.read(),
-                )
-            return public_key  # Ensure 'public_key' is returned
         except Exception as e:
             raise
 
@@ -125,7 +105,7 @@ class MessageVerification():
             k: v for k, v in message.items() if k != 'signature'
         }, sort_keys=True, default=str).encode('utf-8')  # Added default=str to handle date serialization
         try:
-           signature = self.private_key.sign(
+           signature = self.private_signing_key.sign(
                 data,
                 padding.PKCS1v15(),
                 hashes.SHA256()

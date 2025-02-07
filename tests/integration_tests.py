@@ -5,14 +5,12 @@ import os
 import logging  # Added import for logging
 import uuid  # Added import for uuid
 import base64
-from cryptography.hazmat.primitives import padding as sym_padding
+from cryptography.hazmat.primitives import padding as sym_padding, serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.asymmetric import padding, dh
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import padding
-
-import yaml  # Added import for YAML
 import pika  # Added import for pika
 import time  # Added import for time
 import threading  # Added import for threading
@@ -21,7 +19,7 @@ import threading  # Added import for threading
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from user_repository import UserRepository, load_settings
+    from user_repository import load_settings
 except ImportError as e:
     print(f"Error importing user_repository: {e}")
     sys.exit(1)
@@ -34,18 +32,13 @@ class TestUserRepository(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         settings_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'settings.yml')
+
         cls.settings = load_settings(settings_path)
         
         # Use the integration_tests keys directly
         private_key_path = cls.settings['cryptography']['private_key_paths']['integration_tests']
         
-        cls.private_key = cls.load_private_key(private_key_path)
-        with open(cls.settings['cryptography']['encryption_key_path'], 'rb') as key_file:
-            cls.encryption_key = key_file.read()
-        
-        # Validate encryption key length
-        if len(cls.encryption_key) not in (16, 24, 32):
-            raise ValueError(f"Invalid AES key length: {len(cls.encryption_key)} bytes. Key must be 16, 24, or 32 bytes long.")
+        cls.private_signing_key = cls.__load_private_key(private_key_path)
 
         rabbitmq_config = cls.settings.get('rabbitmq', {})
         
@@ -74,11 +67,16 @@ class TestUserRepository(unittest.TestCase):
         cls.response_event = threading.Event()
 
         # Start a thread to listen for responses
-        cls.response_thread = threading.Thread(target=cls.listen_for_responses, daemon=True)
+        cls.response_thread = threading.Thread(target=cls.__listen_for_responses, daemon=True)
         cls.response_thread.start()
     
     @classmethod
-    def listen_for_responses(cls):
+    def tearDownClass(cls):
+        # Close RabbitMQ connection
+        cls.connection.close()
+
+    @classmethod
+    def __listen_for_responses(cls):
         """Listen to the 'user_repository_responses' queue and store responses based on request_id."""
         def on_response(ch, method, properties, body):
             response = json.loads(body)
@@ -99,14 +97,9 @@ class TestUserRepository(unittest.TestCase):
 
         # Start consuming
         channel.start_consuming()
-    
-    @classmethod
-    def tearDownClass(cls):
-        # Close RabbitMQ connection
-        cls.connection.close()
 
     @staticmethod
-    def load_private_key(path: str):
+    def __load_private_key(path: str):
         with open(path, 'rb') as key_file:
             private_key = serialization.load_pem_private_key(
                 key_file.read(),
@@ -114,53 +107,8 @@ class TestUserRepository(unittest.TestCase):
             )
         return private_key
 
-    @staticmethod
-    def encrypt_data(plaintext: str, encryption_key) -> str:
-        """
-        Encrypts the plaintext using AES CBC mode.
-
-        Args:
-            plaintext (str): The data to encrypt.
-
-        Returns:
-            str: The base64-encoded ciphertext.
-        """
-        if not isinstance(plaintext, str):
-            raise TypeError("Input data must be a string")
-
-        iv = os.urandom(16)  # Initialization vector
-        cipher = Cipher(algorithms.AES(encryption_key), modes.CBC(iv), backend=default_backend())
-        encryptor = cipher.encryptor()
-        padder = sym_padding.PKCS7(128).padder()
-        padded_data = padder.update(plaintext.encode('utf-8')) + padder.finalize()
-        ciphertext = encryptor.update(padded_data) + encryptor.finalize()
-        return base64.b64encode(iv + ciphertext).decode('utf-8')
-
-    @staticmethod
-    def decrypt_data(ciphertext_b64: str, encryption_key) -> str:
-        """
-        Decrypts the base64-encoded ciphertext using AES CBC mode.
-
-        Args:
-            ciphertext_b64 (str): The base64-encoded ciphertext.
-
-        Returns:
-            str: The decrypted plaintext.
-        """
-        if not isinstance(ciphertext_b64, str):
-            raise TypeError("Input data must be a string")
-        
-        ciphertext = base64.b64decode(ciphertext_b64)
-        iv = ciphertext[:16]
-        actual_ciphertext = ciphertext[16:]
-        cipher = Cipher(algorithms.AES(encryption_key), modes.CBC(iv), backend=default_backend())
-        decryptor = cipher.decryptor()
-        padded_plaintext = decryptor.update(actual_ciphertext) + decryptor.finalize()
-        unpadder = sym_padding.PKCS7(128).unpadder()
-        plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
-        return plaintext.decode('utf-8')
-    
-    def sign_message(self, message: dict) -> str:
+    @classmethod
+    def __sign_message(cls, message: dict) -> str:
         """
         Sign a message using the private key.
 
@@ -174,7 +122,7 @@ class TestUserRepository(unittest.TestCase):
             k: v for k, v in message.items() if k != 'signature'
         }, sort_keys=True, default=str).encode('utf-8')  # Added default=str to handle date serialization
         try:
-            signature = self.private_key.sign(
+            signature = cls.private_signing_key.sign(
                 data,
                 padding.PKCS1v15(),
                 hashes.SHA256()
@@ -184,12 +132,7 @@ class TestUserRepository(unittest.TestCase):
             print(f"Error during message signing: {e}")
             raise
 
-    def setUp(self):
-        # Removed generating request_id here
-        self.client_id = "client123"
-        self.timestamp = "2023-01-01T12:00:00Z"  # Ensure timestamp format
-
-    def send_and_receive_message(self, message):
+    def __send_and_receive_message(self, message):
         """Send a message and wait for the corresponding response."""
         request_id = message['request_id']  # Retrieve request_id from the message
 
@@ -226,13 +169,17 @@ class TestUserRepository(unittest.TestCase):
             "comment": testname
         }
         message["request_id"] = request_id
-        message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)
+        message["signature"] = self.__sign_message(message)
+        response = self.__send_and_receive_message(message)
         self.assertEqual(response["status"], "success")
         self.assertEqual(response["request_id"], request_id)
         self.assertIn("id", response["data"])
         self.assertIn("signature", response)
         return response
+
+    def setUp(self):
+        self.client_id = "client123"
+        self.timestamp = "2023-01-01T12:00:00Z"  # Ensure timestamp format
 
     def test_create_users_pass(self, testname="test_create_users_pass"):  # Updated method name from test_create_user to test_create_users
         logging.debug("Running test_create_users")
@@ -258,39 +205,12 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_users"
         }
         message["request_id"] = request_id  # Include request_id in the message
-        message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)  # Removed request_id parameter
+        message["signature"] = self.__sign_message(message)
+        response = self.__send_and_receive_message(message)  # Removed request_id parameter
         print("Create Users Response:", response)
         if response["status"] != "error":
             self.fail(f"Create Users failed with status: {response['status']}")
         self.assertEqual(response["status"], "error")
-
-    def test_create_users_encrypted(self):
-        logging.debug("Running test_create_users_encrypted")
-        request_id = str(uuid.uuid4())  # Generate unique request_id
-        message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,
-            "operation": "create_users",
-            "encrypt": True,
-            "data": {
-                "username": f"jane_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
-                "email": "jane@example.com",
-                "user_type": "human",
-                "expiry_date": "2025-01-01T00:00:00Z"
-            },
-            "comment": "test_create_users_encrypted"
-        }
-        message["request_id"] = request_id  # Include request_id in the message
-        message["data"] = self.encrypt_data(json.dumps(message["data"]), self.encryption_key)
-        message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)  # Removed request_id parameter
-        response_data = json.loads(self.decrypt_data(response["data"], self.encryption_key))
-        print("Create Users Encrypted Response:", response_data)
-        if response["status"] != "success":
-            self.fail(f"Create Users Encrypted failed with status: {response['status']}")
-        self.assertEqual(response["status"], "success")
-        self.assertIn("id", response_data)
 
     def test_update_users(self):
         logging.debug("Running test_update_users")
@@ -315,8 +235,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_users"
         }
         update_message["request_id"] = update_request_id  # Include request_id in the message
-        update_message["signature"] = self.sign_message(update_message)
-        response = self.send_and_receive_message(update_message)
+        update_message["signature"] = self.__sign_message(update_message)
+        response = self.__send_and_receive_message(update_message)
         response_data = response
         print("Update Users Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -341,8 +261,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_users"
         }
         delete_message["request_id"] = delete_request_id  # Include request_id in the message
-        delete_message["signature"] = self.sign_message(delete_message)
-        response = self.send_and_receive_message(delete_message)
+        delete_message["signature"] = self.__sign_message(delete_message)
+        response = self.__send_and_receive_message(delete_message)
         response_data = response
         print("Delete Users Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -366,8 +286,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_users"
         }
         get_message["request_id"] = get_request_id  # Include request_id in the message
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)
         response_data = response
         print("Get Users Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -393,8 +313,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_users_by_username"
         }
         get_message["request_id"] = get_request_id  # Include request_id in the message
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)
         response_data = response
         print("Get Users Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -416,62 +336,12 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_users"
         }
         get_message["request_id"] = get_request_id  # Include request_id in the message
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)  # Removed request_id parameter
         response_data = response
         print("Get Users Response:", response_data)
         self.assertEqual(response_data["status"], "error")
         self.assertEqual(response_data["error_code"], "NOT_FOUND")
-
-    def test_get_users_by_id_encrypted(self):
-        logging.debug("Running test_get_users_encrypted")
-        # First, create a user
-        create_request_id = str(uuid.uuid4())  # Generate unique request_id
-        create_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,
-            "operation": "create_users",
-            "encrypt": True,
-            "data": {
-                "username": f"jane_doe_{uuid.uuid4()}",
-                "email": "jane@example.com",
-                "user_type": "human",
-                "expiry_date": "2025-01-01T00:00:00Z"
-            },
-            "comment": "test_get_users_encrypted"
-        }
-        create_message["request_id"] = create_request_id  # Include request_id in the message
-        create_message["data"] = self.encrypt_data(json.dumps(create_message["data"]), self.encryption_key)
-        create_message["signature"] = self.sign_message(create_message)
-        create_response = self.send_and_receive_message(create_message)  # Removed request_id parameter
-        create_response_data = json.loads(self.decrypt_data(create_response["data"], self.encryption_key))
-        self.assertEqual(create_response["status"], "success")
-        self.assertIn("id", create_response_data)
-        user_id = create_response_data["id"]
-
-        # Now, get the user with encryption handled by user_repository.py
-        get_request_id = str(uuid.uuid4())  # Generate unique request_id
-        get_message = {
-            "client_id": self.client_id,
-            "timestamp": self.timestamp,
-            "operation": "get_users",
-            "encrypt": True,
-            "data": {
-                "id": user_id
-            },
-            "comment": "test_get_users_encrypted"
-        }
-        get_message["request_id"] = get_request_id  # Include request_id in the message
-        get_message["data"] = self.encrypt_data(json.dumps(get_message["data"]), self.encryption_key)
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
-        response_data = json.loads(self.decrypt_data(response["data"], self.encryption_key))
-        print("Get Users Encrypted Response:", response_data)
-        if response["status"] != "success":
-            logging.error("Encrypted user retrieval failed.")
-            self.fail("Encrypted user retrieval failed.")
-        self.assertEqual(response["status"], "success")
-        self.assertEqual(response_data["id"], user_id)
 
     def test_batch_operation_pass(self, comment='test_batch_operation'):
         logging.debug("Running test_batch_operation")
@@ -517,8 +387,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": comment
         }
 
-        batch_message["signature"] = self.sign_message(batch_message)
-        response = self.send_and_receive_message(batch_message)  # Removed request_id parameter
+        batch_message["signature"] = self.__sign_message(batch_message)
+        response = self.__send_and_receive_message(batch_message)  # Removed request_id parameter
 
         logging.info("**************** Batch Operation Response: %s", response)
 
@@ -574,69 +444,12 @@ class TestUserRepository(unittest.TestCase):
             "comment": comment
         }
 
-        batch_message["signature"] = self.sign_message(batch_message)
-        response = self.send_and_receive_message(batch_message)  # Removed request_id parameter
+        batch_message["signature"] = self.__sign_message(batch_message)
+        response = self.__send_and_receive_message(batch_message)  # Removed request_id parameter
         logging.info("**************** Batch Operation Response: %s", response)
         print("Batch Operation Response:", response)
         self.assertEqual(response["status"], "error")
         self.test_get_users_by_id_fail(fixed_uuid)
-
-    def test_batch_operation_encrypted(self):
-        logging.debug("Running test_batch_operation_encrypted")
-        fixed_uuid = str(uuid.uuid4())
-        reqid = str(uuid.uuid4())  # Generate a new request ID for the batch operation
-        batch_message = {
-            "client_id": self.client_id,
-            "request_id": reqid,
-            "timestamp": self.timestamp,  # Ensure ISO format
-            "operation": "batch_operations",
-            "encrypt": True,
-            "data": {
-                "actions": [
-                    {
-                        "action": "create_users",  # Updated action name
-                        "data": {
-                            "id": fixed_uuid,  # Specify the fixed UUID
-                            "username": f"john_doe_batch_encrypted_{uuid.uuid4()}",  # Updated for uniqueness
-                            "email": "john_batch@example.com",
-                            "user_type": "human",
-                            "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
-                        }
-                    },
-                    {
-                        "action": "create_user_details",
-                        "data": {
-                            "user_id": fixed_uuid,  # Use the same fixed UUID
-                            "details": {"address": "123 Main St"},
-                            "created_at": "2023-01-01T12:00:00Z",  # Updated to ISO format
-                            "updated_at": "2023-01-01T12:00:00Z"   # Updated to ISO format
-                        }
-                    },
-                    {
-                        "action": "create_passwords",  # Updated action name
-                        "data": {
-                            "user_id": fixed_uuid,  # Use the same fixed UUID
-                            "password_hash": "hashed_password",
-                            "expiry_date": "2024-01-01T00:00:00Z",
-                            "created_at": "2023-01-01T12:00:00Z"  # Updated to ISO format
-                        }
-                    }
-                ]
-            },
-            "comment": "test_batch_operation_encrypted"
-        }
-
-        batch_message["data"] = self.encrypt_data(json.dumps(batch_message["data"]), self.encryption_key)
-        batch_message["signature"] = self.sign_message(batch_message)
-        response = self.send_and_receive_message(batch_message)  # Removed request_id parameter
-        logging.info("**************** Batch Operation Response: %s", response)
-
-        print("Batch Operation Response:", response)
-        response_data = json.loads(self.decrypt_data(response["data"], self.encryption_key))
-        if response["status"] != "error":
-            print(f"Error: {response.get('message')}, Error Code: {response.get('error_code')}")
-        self.assertEqual(response["status"], "success")
-        self.assertEqual(len(response_data["results"]), 3)
 
     def test_create_batch_after_error(self):
         self.test_create_users_fail()
@@ -690,8 +503,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_user_details"
         }
         message["request_id"] = request_id  # Include request_id in the message
-        message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)
+        message["signature"] = self.__sign_message(message)
+        response = self.__send_and_receive_message(message)
         response_data = response
         print("Create User Details Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -719,8 +532,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_user_details"
         }
         create_details_message["request_id"] = create_details_request_id  # Include request_id in the message
-        create_details_message["signature"] = self.sign_message(create_details_message)
-        create_details_response = self.send_and_receive_message(create_details_message)  # Removed request_id parameter
+        create_details_message["signature"] = self.__sign_message(create_details_message)
+        create_details_response = self.__send_and_receive_message(create_details_message)  # Removed request_id parameter
         create_details_response_data = create_details_response
         self.assertEqual(create_details_response_data["status"], "success")
         details_id = create_details_response_data["data"]["id"]
@@ -740,8 +553,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_user_details"
         }
         update_message["request_id"] = request_id  # Include request_id in the message
-        update_message["signature"] = self.sign_message(update_message)
-        response = self.send_and_receive_message(update_message)  # Removed request_id parameter
+        update_message["signature"] = self.__sign_message(update_message)
+        response = self.__send_and_receive_message(update_message)  # Removed request_id parameter
         response_data = response
         print("Update User Details Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -769,8 +582,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_user_details"
         }
         create_details_message["request_id"] = create_details_request_id  # Include request_id in the message
-        create_details_message["signature"] = self.sign_message(create_details_message)
-        create_details_response = self.send_and_receive_message(create_details_message)  # Removed request_id parameter
+        create_details_message["signature"] = self.__sign_message(create_details_message)
+        create_details_response = self.__send_and_receive_message(create_details_message)  # Removed request_id parameter
         create_details_response_data = create_details_response
         self.assertEqual(create_details_response_data["status"], "success")
         details_id = create_details_response_data["data"]["id"]
@@ -787,8 +600,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_user_details"
         }
         delete_message["request_id"] = request_id  # Include request_id in the message
-        delete_message["signature"] = self.sign_message(delete_message)
-        response = self.send_and_receive_message(delete_message)  # Removed request_id parameter
+        delete_message["signature"] = self.__sign_message(delete_message)
+        response = self.__send_and_receive_message(delete_message)  # Removed request_id parameter
         response_data = response
         print("Delete User Details Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -815,8 +628,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_user_details"
         }
         create_details_message["request_id"] = create_details_request_id  # Include request_id in the message
-        create_details_message["signature"] = self.sign_message(create_details_message)
-        create_details_response = self.send_and_receive_message(create_details_message)  # Removed request_id parameter
+        create_details_message["signature"] = self.__sign_message(create_details_message)
+        create_details_response = self.__send_and_receive_message(create_details_message)  # Removed request_id parameter
         create_details_response_data = create_details_response
         self.assertEqual(create_details_response_data["status"], "success")
         details_id = create_details_response_data["data"]["id"]
@@ -833,8 +646,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_user_details"
         }
         get_message["request_id"] = request_id  # Include request_id in the message
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)  # Removed request_id parameter
         response_data = response
         print("Get User Details Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -869,8 +682,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_webauthn_credentials"
         }
         message["request_id"] = request_id  # Include request_id in the message
-        message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)
+        message["signature"] = self.__sign_message(message)
+        response = self.__send_and_receive_message(message)
         response_data = response
         print("Create WebAuthn Credentials Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -905,8 +718,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_webauthn_credentials"
         }
         create_credentials_message["request_id"] = create_credentials_request_id  # Include request_id in the message
-        create_credentials_message["signature"] = self.sign_message(create_credentials_message)
-        create_credentials_response = self.send_and_receive_message(create_credentials_message)  # Removed request_id parameter
+        create_credentials_message["signature"] = self.__sign_message(create_credentials_message)
+        create_credentials_response = self.__send_and_receive_message(create_credentials_message)  # Removed request_id parameter
         create_credentials_response_data = create_credentials_response
         self.assertEqual(create_credentials_response_data["status"], "success")
         credentials_id = create_credentials_response_data["data"]["id"]
@@ -931,8 +744,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_webauthn_credentials"
         }
         update_message["request_id"] = request_id  # Include request_id in the message
-        update_message["signature"] = self.sign_message(update_message)
-        response = self.send_and_receive_message(update_message)  # Removed request_id parameter
+        update_message["signature"] = self.__sign_message(update_message)
+        response = self.__send_and_receive_message(update_message)  # Removed request_id parameter
         response_data = response
         print("Update WebAuthn Credentials Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -967,8 +780,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_webauthn_credentials"
         }
         create_credentials_message["request_id"] = create_credentials_request_id  # Include request_id in the message
-        create_credentials_message["signature"] = self.sign_message(create_credentials_message)
-        create_credentials_response = self.send_and_receive_message(create_credentials_message)  # Removed request_id parameter
+        create_credentials_message["signature"] = self.__sign_message(create_credentials_message)
+        create_credentials_response = self.__send_and_receive_message(create_credentials_message)  # Removed request_id parameter
         create_credentials_response_data = create_credentials_response
         self.assertEqual(create_credentials_response_data["status"], "success")
         credentials_id = create_credentials_response_data["data"]["id"]
@@ -985,8 +798,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_webauthn_credentials"
         }
         delete_message["request_id"] = request_id  # Include request_id in the message
-        delete_message["signature"] = self.sign_message(delete_message)
-        response = self.send_and_receive_message(delete_message)  # Removed request_id parameter
+        delete_message["signature"] = self.__sign_message(delete_message)
+        response = self.__send_and_receive_message(delete_message)  # Removed request_id parameter
         response_data = response
         print("Delete WebAuthn Credentials Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1020,8 +833,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_webauthn_credentials"
         }
         create_credentials_message["request_id"] = create_credentials_request_id  # Include request_id in the message
-        create_credentials_message["signature"] = self.sign_message(create_credentials_message)
-        create_credentials_response = self.send_and_receive_message(create_credentials_message)  # Removed request_id parameter
+        create_credentials_message["signature"] = self.__sign_message(create_credentials_message)
+        create_credentials_response = self.__send_and_receive_message(create_credentials_message)  # Removed request_id parameter
         create_credentials_response_data = create_credentials_response
         self.assertEqual(create_credentials_response_data["status"], "success")
         credentials_id = create_credentials_response_data["data"]["id"]
@@ -1038,8 +851,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_webauthn_credentials"
         }
         get_message["request_id"] = request_id  # Include request_id in the message
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)  # Removed request_id parameter
         response_data = response
         print("Get WebAuthn Credentials Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1073,8 +886,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_oauth2_signins"
         }
         message["request_id"] = request_id  # Include request_id in the message
-        message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)  # Removed request_id parameter
+        message["signature"] = self.__sign_message(message)
+        response = self.__send_and_receive_message(message)  # Removed request_id parameter
         response_data = response
         print("Create OAuth2 Signins Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1107,8 +920,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_oauth2_signins"
         }
         create_signins_message["request_id"] = create_signins_request_id  # Include request_id in the message
-        create_signins_message["signature"] = self.sign_message(create_signins_message)
-        create_signins_response = self.send_and_receive_message(create_signins_message)  # Removed request_id parameter
+        create_signins_message["signature"] = self.__sign_message(create_signins_message)
+        create_signins_response = self.__send_and_receive_message(create_signins_message)  # Removed request_id parameter
         create_signins_response_data = create_signins_response
         self.assertEqual(create_signins_response_data["status"], "success")
         signins_id = create_signins_response_data["data"]["id"]
@@ -1135,8 +948,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_oauth2_signins"
         }
         update_message["request_id"] = request_id  # Include request_id in the message
-        update_message["signature"] = self.sign_message(update_message)
-        response = self.send_and_receive_message(update_message)  # Removed request_id parameter
+        update_message["signature"] = self.__sign_message(update_message)
+        response = self.__send_and_receive_message(update_message)  # Removed request_id parameter
         response_data = response
         print("Update OAuth2 Signins Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1170,8 +983,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_oauth2_signins"
         }
         create_signins_message["request_id"] = create_signins_request_id  # Include request_id in the message
-        create_signins_message["signature"] = self.sign_message(create_signins_message)
-        create_signins_response = self.send_and_receive_message(create_signins_message)  # Removed request_id parameter
+        create_signins_message["signature"] = self.__sign_message(create_signins_message)
+        create_signins_response = self.__send_and_receive_message(create_signins_message)  # Removed request_id parameter
         create_signins_response_data = create_signins_response
         self.assertEqual(create_signins_response_data["status"], "success")
         signins_id = create_signins_response_data["data"]["id"]
@@ -1188,8 +1001,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_oauth2_signins"
         }
         delete_message["request_id"] = request_id  # Include request_id in the message
-        delete_message["signature"] = self.sign_message(delete_message)
-        response = self.send_and_receive_message(delete_message)  # Removed request_id parameter
+        delete_message["signature"] = self.__sign_message(delete_message)
+        response = self.__send_and_receive_message(delete_message)  # Removed request_id parameter
         response_data = response
         print("Delete OAuth2 Signins Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1222,8 +1035,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_oauth2_signins"
         }
         create_signins_message["request_id"] = create_signins_request_id  # Include request_id in the message
-        create_signins_message["signature"] = self.sign_message(create_signins_message)
-        create_signins_response = self.send_and_receive_message(create_signins_message)  # Removed request_id parameter
+        create_signins_message["signature"] = self.__sign_message(create_signins_message)
+        create_signins_response = self.__send_and_receive_message(create_signins_message)  # Removed request_id parameter
         create_signins_response_data = create_signins_response
         self.assertEqual(create_signins_response_data["status"], "success")
         signins_id = create_signins_response_data["data"]["id"]
@@ -1240,8 +1053,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_oauth2_signins"
         }
         get_message["request_id"] = request_id  # Include request_id in the message
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)  # Removed request_id parameter
         response_data = response
         print("Get OAuth2 Signins Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1273,8 +1086,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_public_ssh_keys"
         }
         message["request_id"] = request_id  # Include request_id in the message
-        message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)  # Removed request_id parameter
+        message["signature"] = self.__sign_message(message)
+        response = self.__send_and_receive_message(message)  # Removed request_id parameter
         response_data = response
         print("Create Public SSH Keys Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1306,8 +1119,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_public_ssh_keys"
         }
         create_keys_message["request_id"] = create_keys_request_id  # Include request_id in the message
-        create_keys_message["signature"] = self.sign_message(create_keys_message)
-        create_keys_response = self.send_and_receive_message(create_keys_message)  # Removed request_id parameter
+        create_keys_message["signature"] = self.__sign_message(create_keys_message)
+        create_keys_response = self.__send_and_receive_message(create_keys_message)  # Removed request_id parameter
         create_keys_response_data = create_keys_response
         self.assertEqual(create_keys_response_data["status"], "success")
         keys_id = create_keys_response_data["data"]["id"]
@@ -1331,8 +1144,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_public_ssh_keys"
         }
         update_message["request_id"] = request_id  # Include request_id in the message
-        update_message["signature"] = self.sign_message(update_message)
-        response = self.send_and_receive_message(update_message)  # Removed request_id parameter
+        update_message["signature"] = self.__sign_message(update_message)
+        response = self.__send_and_receive_message(update_message)  # Removed request_id parameter
         response_data = response
         print("Update Public SSH Keys Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1364,8 +1177,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_public_ssh_keys"
         }
         create_keys_message["request_id"] = create_keys_request_id  # Include request_id in the message
-        create_keys_message["signature"] = self.sign_message(create_keys_message)
-        create_keys_response = self.send_and_receive_message(create_keys_message)  # Removed request_id parameter
+        create_keys_message["signature"] = self.__sign_message(create_keys_message)
+        create_keys_response = self.__send_and_receive_message(create_keys_message)  # Removed request_id parameter
         create_keys_response_data = create_keys_response
         self.assertEqual(create_keys_response_data["status"], "success")
         keys_id = create_keys_response_data["data"]["id"]
@@ -1382,8 +1195,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_public_ssh_keys"
         }
         delete_message["request_id"] = request_id  # Include request_id in the message
-        delete_message["signature"] = self.sign_message(delete_message)
-        response = self.send_and_receive_message(delete_message)  # Removed request_id parameter
+        delete_message["signature"] = self.__sign_message(delete_message)
+        response = self.__send_and_receive_message(delete_message)  # Removed request_id parameter
         response_data = response
         print("Delete Public SSH Keys Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1414,8 +1227,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_public_ssh_keys"
         }
         create_keys_message["request_id"] = create_keys_request_id  # Include request_id in the message
-        create_keys_message["signature"] = self.sign_message(create_keys_message)
-        create_keys_response = self.send_and_receive_message(create_keys_message)  # Removed request_id parameter
+        create_keys_message["signature"] = self.__sign_message(create_keys_message)
+        create_keys_response = self.__send_and_receive_message(create_keys_message)  # Removed request_id parameter
         create_keys_response_data = create_keys_response
         self.assertEqual(create_keys_response_data["status"], "success")
         keys_id = create_keys_response_data["data"]["id"]
@@ -1432,8 +1245,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_public_ssh_keys"
         }
         get_message["request_id"] = request_id  # Include request_id in the message
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)  # Removed request_id parameter
         response_data = response
         print("Get Public SSH Keys Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1461,8 +1274,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_login_tokens"
         }
         message["request_id"] = request_id  # Include request_id in the message
-        message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)  # Removed request_id parameter
+        message["signature"] = self.__sign_message(message)
+        response = self.__send_and_receive_message(message)  # Removed request_id parameter
         response_data = response
         print("Create Login Tokens Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1490,8 +1303,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_login_tokens"
         }
         create_tokens_message["request_id"] = create_tokens_request_id  # Include request_id in the message
-        create_tokens_message["signature"] = self.sign_message(create_tokens_message)
-        create_tokens_response = self.send_and_receive_message(create_tokens_message)  # Removed request_id parameter
+        create_tokens_message["signature"] = self.__sign_message(create_tokens_message)
+        create_tokens_response = self.__send_and_receive_message(create_tokens_message)  # Removed request_id parameter
         create_tokens_response_data = create_tokens_response
         self.assertEqual(create_tokens_response_data["status"], "success")
         tokens_id = create_tokens_response_data["data"]["id"]
@@ -1512,8 +1325,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_login_tokens"
         }
         update_message["request_id"] = request_id  # Include request_id in the message
-        update_message["signature"] = self.sign_message(update_message)
-        response = self.send_and_receive_message(update_message)  # Removed request_id parameter
+        update_message["signature"] = self.__sign_message(update_message)
+        response = self.__send_and_receive_message(update_message)  # Removed request_id parameter
         response_data = response
         print("Update Login Tokens Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1541,8 +1354,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_login_tokens"
         }
         create_tokens_message["request_id"] = create_tokens_request_id  # Include request_id in the message
-        create_tokens_message["signature"] = self.sign_message(create_tokens_message)
-        create_tokens_response = self.send_and_receive_message(create_tokens_message)  # Removed request_id parameter
+        create_tokens_message["signature"] = self.__sign_message(create_tokens_message)
+        create_tokens_response = self.__send_and_receive_message(create_tokens_message)  # Removed request_id parameter
         create_tokens_response_data = create_tokens_response
         self.assertEqual(create_tokens_response_data["status"], "success")
         tokens_id = create_tokens_response_data["data"]["id"]
@@ -1559,8 +1372,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_login_tokens"
         }
         delete_message["request_id"] = request_id  # Include request_id in the message
-        delete_message["signature"] = self.sign_message(delete_message)
-        response = self.send_and_receive_message(delete_message)  # Removed request_id parameter
+        delete_message["signature"] = self.__sign_message(delete_message)
+        response = self.__send_and_receive_message(delete_message)  # Removed request_id parameter
         response_data = response
         print("Delete Login Tokens Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1587,8 +1400,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_login_tokens"
         }
         create_tokens_message["request_id"] = create_tokens_request_id  # Include request_id in the message
-        create_tokens_message["signature"] = self.sign_message(create_tokens_message)
-        create_tokens_response = self.send_and_receive_message(create_tokens_message)  # Removed request_id parameter
+        create_tokens_message["signature"] = self.__sign_message(create_tokens_message)
+        create_tokens_response = self.__send_and_receive_message(create_tokens_message)  # Removed request_id parameter
         create_tokens_response_data = create_tokens_response
         self.assertEqual(create_tokens_response_data["status"], "success")
         tokens_id = create_tokens_response_data["data"]["id"]
@@ -1605,8 +1418,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_login_tokens"
         }
         get_message["request_id"] = request_id  # Include request_id in the message
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)  # Removed request_id parameter
         response_data = response
         print("Get Login Tokens Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1634,8 +1447,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_passwords"
         }
         message["request_id"] = request_id  # Include request_id in the message
-        message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)  # Removed request_id parameter
+        message["signature"] = self.__sign_message(message)
+        response = self.__send_and_receive_message(message)  # Removed request_id parameter
         response_data = response
         print("Create Passwords Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1663,8 +1476,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_passwords"
         }
         create_passwords_message["request_id"] = create_passwords_request_id  # Include request_id in the message
-        create_passwords_message["signature"] = self.sign_message(create_passwords_message)
-        create_passwords_response = self.send_and_receive_message(create_passwords_message)  # Removed request_id parameter
+        create_passwords_message["signature"] = self.__sign_message(create_passwords_message)
+        create_passwords_response = self.__send_and_receive_message(create_passwords_message)  # Removed request_id parameter
         create_passwords_response_data = create_passwords_response
         self.assertEqual(create_passwords_response_data["status"], "success")
         passwords_id = create_passwords_response_data["data"]["id"]
@@ -1685,8 +1498,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_passwords"
         }
         update_message["request_id"] = request_id  # Include request_id in the message
-        update_message["signature"] = self.sign_message(update_message)
-        response = self.send_and_receive_message(update_message)  # Removed request_id parameter
+        update_message["signature"] = self.__sign_message(update_message)
+        response = self.__send_and_receive_message(update_message)  # Removed request_id parameter
         response_data = response
         print("Update Passwords Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1714,8 +1527,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_passwords"
         }
         create_passwords_message["request_id"] = create_passwords_request_id  # Include request_id in the message
-        create_passwords_message["signature"] = self.sign_message(create_passwords_message)
-        create_passwords_response = self.send_and_receive_message(create_passwords_message)  # Removed request_id parameter
+        create_passwords_message["signature"] = self.__sign_message(create_passwords_message)
+        create_passwords_response = self.__send_and_receive_message(create_passwords_message)  # Removed request_id parameter
         create_passwords_response_data = create_passwords_response
         self.assertEqual(create_passwords_response_data["status"], "success")
         passwords_id = create_passwords_response_data["data"]["id"]
@@ -1732,8 +1545,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_delete_passwords"
         }
         delete_message["request_id"] = request_id  # Include request_id in the message
-        delete_message["signature"] = self.sign_message(delete_message)
-        response = self.send_and_receive_message(delete_message)  # Removed request_id parameter
+        delete_message["signature"] = self.__sign_message(delete_message)
+        response = self.__send_and_receive_message(delete_message)  # Removed request_id parameter
         response_data = response
         print("Delete Passwords Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1760,8 +1573,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_passwords"
         }
         create_passwords_message["request_id"] = create_passwords_request_id  # Include request_id in the message
-        create_passwords_message["signature"] = self.sign_message(create_passwords_message)
-        create_passwords_response = self.send_and_receive_message(create_passwords_message)  # Removed request_id parameter
+        create_passwords_message["signature"] = self.__sign_message(create_passwords_message)
+        create_passwords_response = self.__send_and_receive_message(create_passwords_message)  # Removed request_id parameter
         create_passwords_response_data = create_passwords_response
         self.assertEqual(create_passwords_response_data["status"], "success")
         passwords_id = create_passwords_response_data["data"]["id"]
@@ -1778,8 +1591,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_passwords"
         }
         get_message["request_id"] = request_id  # Include request_id in the message
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)  # Removed request_id parameter
         response_data = response
         print("Get Passwords Response:", response_data)
         self.assertEqual(response_data["status"], "success")
@@ -1801,8 +1614,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_users_with_different_timezones"
         }
         message["request_id"] = request_id  # Include request_id in the message
-        message["signature"] = self.sign_message(message)
-        response = self.send_and_receive_message(message)  # Removed request_id parameter
+        message["signature"] = self.__sign_message(message)
+        response = self.__send_and_receive_message(message)  # Removed request_id parameter
         response_data = response
         self.assertEqual(response_data["status"], "success")
         self.assertIn("id", response_data["data"])
@@ -1826,8 +1639,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_users_with_different_timezones"
         }
         create_message["request_id"] = create_request_id  # Include request_id in the message
-        create_message["signature"] = self.sign_message(create_message)
-        create_response = self.send_and_receive_message(create_message)  # Removed request_id parameter
+        create_message["signature"] = self.__sign_message(create_message)
+        create_response = self.__send_and_receive_message(create_message)  # Removed request_id parameter
         create_response_data = create_response
         self.assertEqual(create_response_data["status"], "success")
         user_id = create_response_data["data"]["id"]
@@ -1846,8 +1659,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_users_with_different_timezones"
         }
         update_message["request_id"] = update_request_id  # Include request_id in the message
-        update_message["signature"] = self.sign_message(update_message)
-        update_response = self.send_and_receive_message(update_message)  # Removed request_id parameter
+        update_message["signature"] = self.__sign_message(update_message)
+        update_response = self.__send_and_receive_message(update_message)  # Removed request_id parameter
         update_response_data = update_response
         self.assertEqual(update_response_data["status"], "success")
         self.assertEqual(update_response_data["data"]["id"], user_id)
@@ -1865,8 +1678,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_update_users_with_different_timezones"
         }
         get_message["request_id"] = get_request_id  # Include request_id in the message
-        get_message["signature"] = self.sign_message(get_message)
-        get_response = self.send_and_receive_message(get_message)  # Removed request_id parameter
+        get_message["signature"] = self.__sign_message(get_message)
+        get_response = self.__send_and_receive_message(get_message)  # Removed request_id parameter
         get_response_data = get_response
         self.assertEqual(get_response_data["status"], "success")
         self.assertEqual(get_response_data["data"]["expiry_date"], "2024-01-04 21:00:00")
@@ -1904,8 +1717,8 @@ class TestUserRepository(unittest.TestCase):
             "data": {"actions": actions},
             "comment": "test_create_1000_users_with_passwords"
         }
-        batch_message["signature"] = self.sign_message(batch_message)
-        response = self.send_and_receive_message(batch_message)
+        batch_message["signature"] = self.__sign_message(batch_message)
+        response = self.__send_and_receive_message(batch_message)
         self.assertEqual(response["status"], "success")
 
     def test_create_users_with_all_records_in_blocks(self):
@@ -2004,11 +1817,11 @@ class TestUserRepository(unittest.TestCase):
                 "data": {"actions": actions},
                 "comment": f"test_create_users_with_all_records_block_{block_start // block_size + 1}"
             }
-            batch_message["signature"] = self.sign_message(batch_message)
+            batch_message["signature"] = self.__sign_message(batch_message)
             print("\n\n")
             print(batch_message)
             print("\n\n")
-            response = self.send_and_receive_message(batch_message)
+            response = self.__send_and_receive_message(batch_message)
             self.assertEqual(response["status"], "success")
             logging.info(f"Block {block_start // block_size + 1} processed successfully")
 
@@ -2033,8 +1846,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_user_details_for_get_by_user_id"
         }
         create_details_message["request_id"] = details_request_id
-        create_details_message["signature"] = self.sign_message(create_details_message)
-        create_details_response = self.send_and_receive_message(create_details_message)
+        create_details_message["signature"] = self.__sign_message(create_details_message)
+        create_details_response = self.__send_and_receive_message(create_details_message)
         self.assertEqual(create_details_response["status"], "success")
 
         # Get user details by user_id
@@ -2047,8 +1860,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_user_details_by_user_id"
         }
         get_message["request_id"] = get_request_id
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)
         self.assertEqual(response["status"], "success")
         # Expect a list of user details records
         self.assertIsInstance(response["data"], list)
@@ -2077,8 +1890,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_password_for_get_by_user_id"
         }
         create_password_message["request_id"] = password_request_id
-        create_password_message["signature"] = self.sign_message(create_password_message)
-        create_password_response = self.send_and_receive_message(create_password_message)
+        create_password_message["signature"] = self.__sign_message(create_password_message)
+        create_password_response = self.__send_and_receive_message(create_password_message)
         self.assertEqual(create_password_response["status"], "success")
 
         # Get passwords by user_id
@@ -2091,8 +1904,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_passwords_by_user_id"
         }
         get_message["request_id"] = get_request_id
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)
         self.assertEqual(response["status"], "success")
         self.assertIsInstance(response["data"], list)
         self.assertGreaterEqual(len(response["data"]), 1)
@@ -2126,8 +1939,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_webauthn_for_get_by_user_id"
         }
         create_webauthn_message["request_id"] = webauthn_request_id
-        create_webauthn_message["signature"] = self.sign_message(create_webauthn_message)
-        create_webauthn_response = self.send_and_receive_message(create_webauthn_message)
+        create_webauthn_message["signature"] = self.__sign_message(create_webauthn_message)
+        create_webauthn_response = self.__send_and_receive_message(create_webauthn_message)
         self.assertEqual(create_webauthn_response["status"], "success")
 
         # Get webauthn credentials by user_id
@@ -2140,8 +1953,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_webauthn_credentials_by_user_id"
         }
         get_message["request_id"] = get_request_id
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)
         self.assertEqual(response["status"], "success")
         self.assertIsInstance(response["data"], list)
         self.assertGreaterEqual(len(response["data"]), 1)
@@ -2175,8 +1988,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_oauth2_for_get_by_user_id"
         }
         create_oauth_message["request_id"] = oauth_request_id
-        create_oauth_message["signature"] = self.sign_message(create_oauth_message)
-        create_oauth_response = self.send_and_receive_message(create_oauth_message)
+        create_oauth_message["signature"] = self.__sign_message(create_oauth_message)
+        create_oauth_response = self.__send_and_receive_message(create_oauth_message)
         self.assertEqual(create_oauth_response["status"], "success")
 
         # Get OAuth2 signins by user_id
@@ -2189,8 +2002,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_oauth2_signins_by_user_id"
         }
         get_message["request_id"] = get_request_id
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)
         self.assertEqual(response["status"], "success")
         self.assertIsInstance(response["data"], list)
         self.assertGreaterEqual(len(response["data"]), 1)
@@ -2220,8 +2033,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_ssh_for_get_by_user_id"
         }
         create_ssh_message["request_id"] = ssh_request_id
-        create_ssh_message["signature"] = self.sign_message(create_ssh_message)
-        create_ssh_response = self.send_and_receive_message(create_ssh_message)
+        create_ssh_message["signature"] = self.__sign_message(create_ssh_message)
+        create_ssh_response = self.__send_and_receive_message(create_ssh_message)
         self.assertEqual(create_ssh_response["status"], "success")
 
         # Get public SSH keys by user_id
@@ -2234,8 +2047,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_public_ssh_keys_by_user_id"
         }
         get_message["request_id"] = get_request_id
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)
         self.assertEqual(response["status"], "success")
         self.assertIsInstance(response["data"], list)
         self.assertGreaterEqual(len(response["data"]), 1)
@@ -2263,8 +2076,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_create_login_token_for_get_by_user_id"
         }
         create_token_message["request_id"] = token_request_id
-        create_token_message["signature"] = self.sign_message(create_token_message)
-        create_token_response = self.send_and_receive_message(create_token_message)
+        create_token_message["signature"] = self.__sign_message(create_token_message)
+        create_token_response = self.__send_and_receive_message(create_token_message)
         self.assertEqual(create_token_response["status"], "success")
 
         # Get login tokens by user_id
@@ -2277,8 +2090,8 @@ class TestUserRepository(unittest.TestCase):
             "comment": "test_get_login_tokens_by_user_id"
         }
         get_message["request_id"] = get_request_id
-        get_message["signature"] = self.sign_message(get_message)
-        response = self.send_and_receive_message(get_message)
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)
         self.assertEqual(response["status"], "success")
         self.assertIsInstance(response["data"], list)
         self.assertGreaterEqual(len(response["data"]), 1)

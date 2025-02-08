@@ -10,8 +10,8 @@ Please note this software is under active development.
 - **Batch Operations:** Execute grouped actions atomically, with support for both plain and encrypted messages.
 - **Secure Communication:** 
   - **Message Signing and Verification:** Uses RSA with PKCS#1 v1.5 padding and SHA-256 hashing to sign messages. All messages include a `signature` field which the service validates against public keys stored in the configured `public_keys_dir`.
-  - **Key Exchange:** Supports a key exchange process via the `key_exchange_request` operation, allowing clients and the service to derive an AES encryption key.
-  - **Message Encryption:** Optionally encrypt message payloads using AES in CBC mode when the `encrypt` flag is set. The symmetric key is obtained from the Diffie-Hellman key exchange.
+  - **Key Exchange:** Supports a key exchange process via the `key_exchange_request` operation, allowing clients and the service to derive a shared AES encryption key.
+  - **Message Encryption:** Optionally encrypt message payloads using AES encryption. The service supports both **AES 256 CBC** and **AES 256 GCM** modes. The chosen algorithm is specified in the `algorithm` field of the message and is used for encrypting and decrypting the data, ensuring confidentiality and integrity.
 - **Message Processing:** Accepts JSON-based messages with fields like `client_id`, `request_id`, `timestamp`, `operation`, and `data`. 
 - **Testing:** Includes both unit and integration tests, including tests for encryption workflows. **Integration tests should not be run in a production environment.**
 
@@ -26,11 +26,11 @@ Please note this software is under active development.
     pip install -r requirements.txt
     ```
 3. **Configure Settings:**
-    - Create a `settings.yml` file by copying the provided `template_for_settings.yml` and updating it with your database, cryptographic, and RabbitMQ configurations.
-    - **Important:** Ensure that your cryptographic key paths (including the `public_keys_dir`) and RabbitMQ settings are correctly configured. If applicable, also update the `encryption_key_path`.
+    - Create a `settings.yml` file by copying the provided `template_for_settings.yml` and updating it with your database, cryptographic (including `encryption_key_path` if applicable), and RabbitMQ configurations.
+    - **Important:** Ensure that your cryptographic key paths (including the `public_keys_dir` and optionally `encryption_key_path`) and RabbitMQ settings are correctly configured.
 4. **Generate Cryptographic Keys:**
     The repository uses RSA keys for signing messages and supports AES encryption derived from a Diffie-Hellman key exchange.
-    - To regenerate all signing keys, run:
+    - To regenerate all signing keys (and update the `encryption_key_path` if specified), run:
       ```bash
       python generate_keys.py --regenerate-all-signing-keys
       ```
@@ -38,7 +38,7 @@ Please note this software is under active development.
       ```bash
       python generate_keys.py --delete-all-signing-keys
       ```
-    - You can also perform individual key operations as needed.
+    - Running the script without any arguments will check for missing keys and report their status.
 5. **Initialize the Database:**
     ```bash
     mysql -u your_db_user -p < init.sql
@@ -95,7 +95,7 @@ Please note this software is under active development.
 
 - **Supported Operations:**
   - **Create Operations:** e.g., `create_users`, `create_user_details`, etc.
-  - **Update Operations:** e.g., `update_users`, `update_user_details`, `update_webauthn_credentials`, `update_oauth2_signins`, `update_public_ssh_keys`, `update_login_tokens`, etc.
+  - **Update Operations:** e.g., `update_users`, `update_user_details`, **`update_webauthn_credentials`**, **`update_oauth2_signins`**, **`update_public_ssh_keys`**, etc.
   - **Delete Operations:** e.g., `delete_users`, etc.
   - **Get Operations:** e.g., `get_users`, etc.
   - **Batch Operations:** Execute multiple sub-actions atomically by sending a `batch_operations` message.
@@ -117,8 +117,7 @@ These files serve as a valuable reference for understanding the message format, 
 
 ### Message Encryption and Key Exchange
 - **Encryption:**  
-  When the `encrypt` flag is `true`, the `data` field must be encrypted using AES in CBC mode. The encryption and decryption functions are designed to work with the symmetric key derived from the key exchange.
-  
+  When the `encrypt` flag is `true`, the `data` field must be encrypted using AES. You can choose between **CBC** mode for compatibility or **GCM** mode for authenticated encryption. The symmetric key used for encryption is derived from the Diffie-Hellman key exchange.
 - **Key Exchange:**  
   Clients initiate a secure channel by sending a `key_exchange_request` message containing their Diffie-Hellman public key. The service replies with its own public key. Both parties then use the exchange to derive a shared symmetric AES key for encrypting subsequent messages.
 

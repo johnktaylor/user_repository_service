@@ -1,25 +1,29 @@
 from typing import Dict, Any
 from cryptography.hazmat.primitives import serialization, hashes, padding as sym_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.asymmetric import dh
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 import base64
 import os
 
 
-class MessageEncryption():
-    def __init__(self, settings: Dict[str, Any]):
-        cryptography = settings.get('cryptography')
-        if not cryptography:
-            raise ValueError("Error: 'cryptography' section is missing in settings.yml")
 
+class MessageEncryption:
+    def __init__(self, settings: Dict[str, Any]):
+        self.settings = settings
         self.encryption_keys = {}
+
+        self.algorithms = {
+            "aes_cbc": MessageEncryptionAes256CBC(settings),
+            "aes_gcm": MessageEncryptionAes256GCM(settings)
+        }
 
     def handle_key_exchange(self, data: Dict[str, Any], original_message: Dict[str, Any]):
         """
         Handle key exchange.
         """
+        print(f"*************Key exchange request received within MessageEncryptionAes256CBC:************** {data} *****************")
         return self.__generate_public_key_and_encryption_key(data, original_message)
 
     def __generate_public_key_and_encryption_key(self, data: Dict[str, Any], original_message: Dict[str, Any]):
@@ -64,7 +68,86 @@ class MessageEncryption():
 
         return {"server_public_key": pk_bytes.decode('utf-8'), "salt": base64_salt}
 
-    def encrypt_data(self, plaintext: str, client_id: str) -> str:
+    def encrypt_data(self, plaintext: str, algorithm: str, client_id: str) -> str:
+        encryption_key_details = self.encryption_keys.get(client_id)
+        if not client_id:
+            raise ValueError("Client ID is required")
+        if not encryption_key_details:
+            raise ValueError("Encryption key not set")
+        return self.algorithms[algorithm].encrypt_data(plaintext, encryption_key_details)
+
+    def decrypt_data(self, ciphertext_b64: str, algorithm: str, client_id: str) -> str:
+        encryption_key_details = self.encryption_keys.get(client_id)
+        if not client_id:
+            raise ValueError("Client ID is required")
+        if not encryption_key_details:
+            raise ValueError("Encryption key not set")
+        return self.algorithms[algorithm].decrypt_data(ciphertext_b64, encryption_key_details)
+
+    
+
+class MessageEncryptionAes256CBC():
+    def __init__(self, settings: Dict[str, Any]):
+        cryptography = settings.get('cryptography')
+        if not cryptography:
+            raise ValueError("Error: 'cryptography' section is missing in settings.yml")
+
+        self.encryption_keys = {}
+
+    def encrypt_data(self, plaintext: str, encryption_key_details: Dict[str, Any]) -> str:
+        """
+        Encrypts the plaintext using AES CBC mode.
+
+
+        Args:
+            plaintext (str): The data to encrypt.
+
+        Returns:
+            str: The base64-encoded ciphertext.
+        """
+        iv = os.urandom(16)  # Initialization vector
+        cipher = Cipher(algorithms.AES(encryption_key_details.get("derived_key")), modes.CBC(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+        padder = sym_padding.PKCS7(128).padder()
+
+        padded_data = padder.update(plaintext.encode('utf-8')) + padder.finalize()
+        ciphertext = encryptor.update(padded_data) + encryptor.finalize()
+        return base64.b64encode(iv + ciphertext).decode('utf-8')
+
+    def decrypt_data(self, ciphertext_b64: str, encryption_key_details: Dict[str, Any]) -> str:
+        """
+        Decrypts the base64-encoded ciphertext using AES CBC mode.
+
+
+        Args:
+            ciphertext_b64 (str): The base64-encoded ciphertext.
+
+        Returns:
+            str: The decrypted plaintext.
+        """
+
+        ciphertext = base64.b64decode(ciphertext_b64)
+        iv = ciphertext[:16]
+        actual_ciphertext = ciphertext[16:]
+        cipher = Cipher(algorithms.AES(encryption_key_details.get("derived_key")), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        padded_plaintext = decryptor.update(actual_ciphertext) + decryptor.finalize()
+        unpadder = sym_padding.PKCS7(128).unpadder()
+
+        plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
+        return plaintext.decode('utf-8')
+
+
+
+class MessageEncryptionAes256GCM():
+    def __init__(self, settings: Dict[str, Any]):
+        cryptography = settings.get('cryptography')
+        if not cryptography:
+            raise ValueError("Error: 'cryptography' section is missing in settings.yml")
+
+        self.encryption_keys = {}
+
+    def encrypt_data(self, plaintext: str, encryption_key_details: Dict[str, Any]) -> str:
         """
         Encrypts the plaintext using AES CBC mode.
 
@@ -74,24 +157,23 @@ class MessageEncryption():
         Returns:
             str: The base64-encoded ciphertext.
         """
-        if not client_id:
-            raise ValueError("Client ID is required")
+        # AES-GCM requires a 12-byte nonce
+        nonce = os.urandom(12)
+        key = encryption_key_details.get("derived_key")
 
-        if not self.encryption_keys.get(client_id):
-            raise ValueError("Encryption key not set")
+        # Instantiate AESGCM with the derived key
+        aesgcm = AESGCM(key)
 
-        iv = os.urandom(16)  # Initialization vector
-        cipher = Cipher(algorithms.AES(self.encryption_keys.get(client_id).get("derived_key")), modes.CBC(iv), backend=default_backend())
-        encryptor = cipher.encryptor()
-        padder = sym_padding.PKCS7(128).padder()
+        # Encrypt; no additional authenticated data (AAD) is provided here (pass None)
+        ciphertext = aesgcm.encrypt(nonce, plaintext.encode('utf-8'), None)
 
-        padded_data = padder.update(plaintext.encode('utf-8')) + padder.finalize()
-        ciphertext = encryptor.update(padded_data) + encryptor.finalize()
-        return base64.b64encode(iv + ciphertext).decode('utf-8')
+        # Prepend the nonce to the ciphertext; both are needed for decryption
+        return base64.b64encode(nonce + ciphertext).decode('utf-8')
 
-    def decrypt_data(self, ciphertext_b64: str, client_id: str) -> str:
+    def decrypt_data(self, ciphertext_b64: str, encryption_key_details: Dict[str, Any]) -> str:
         """
         Decrypts the base64-encoded ciphertext using AES CBC mode.
+
 
         Args:
             ciphertext_b64 (str): The base64-encoded ciphertext.
@@ -99,19 +181,16 @@ class MessageEncryption():
         Returns:
             str: The decrypted plaintext.
         """
-        
-        if not client_id:
-            raise ValueError("Client ID is required")
+        # Decode the base64 data
+        data = base64.b64decode(ciphertext_b64)
 
-        if not self.encryption_keys.get(client_id):
-            raise ValueError("Encryption key not set")
+        # Extract the 12-byte nonce and the actual ciphertext (which includes the tag)
+        nonce = data[:12]
+        actual_ciphertext = data[12:]
+        key = encryption_key_details.get("derived_key")
 
-        ciphertext = base64.b64decode(ciphertext_b64)
-        iv = ciphertext[:16]
-        actual_ciphertext = ciphertext[16:]
-        cipher = Cipher(algorithms.AES(self.encryption_keys.get(client_id).get("derived_key")), modes.CBC(iv), backend=default_backend())
-        decryptor = cipher.decryptor()
-        padded_plaintext = decryptor.update(actual_ciphertext) + decryptor.finalize()
-        unpadder = sym_padding.PKCS7(128).unpadder()
-        plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
-        return plaintext.decode('utf-8')
+        aesgcm = AESGCM(key)
+
+        # Decrypt; if the ciphertext was tampered with, this will raise an exception
+        plaintext_bytes = aesgcm.decrypt(nonce, actual_ciphertext, None)
+        return plaintext_bytes.decode('utf-8')

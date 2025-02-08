@@ -203,7 +203,7 @@ class UserRepository:
         """
         return self.messagedatefunctions.parse_timestamp(timestamp_str)
         
-    def encrypt_data(self, plaintext: str, client_id: str) -> str:
+    def encrypt_data(self, plaintext: str, algorithm: str, client_id: str) -> str:
         """
         Encrypts the plaintext using AES CBC mode.
 
@@ -213,11 +213,12 @@ class UserRepository:
         Returns:
             str: The base64-encoded ciphertext.
         """
-        return self.messageencryption.encrypt_data(plaintext, client_id)
+        return self.messageencryption.encrypt_data(plaintext, algorithm, client_id)
 
-    def decrypt_data(self, ciphertext_b64: str, client_id: str) -> str:
+    def decrypt_data(self, ciphertext_b64: str, algorithm: str, client_id: str) -> str:
         """
         Decrypts the base64-encoded ciphertext using AES CBC mode.
+
 
         Args:
             ciphertext_b64 (str): The base64-encoded ciphertext.
@@ -225,7 +226,7 @@ class UserRepository:
         Returns:
             str: The decrypted plaintext.
         """
-        return self.messageencryption.decrypt_data(ciphertext_b64, client_id)
+        return self.messageencryption.decrypt_data(ciphertext_b64, algorithm, client_id)
     
     def _generate_response(self, original_message: Dict[str, Any], operation: str, status: str, message: str, data: Dict[str, Any] = None, error_code: str = None) -> str:
         """
@@ -310,7 +311,7 @@ class UserRepository:
             print(f"Encrypted Message Received: {parsed_message}")
             encrypted_data = parsed_message.get('data')
             try:
-                decrypted_data = self.decrypt_data(encrypted_data, parsed_message.get("client_id"))
+                decrypted_data = self.decrypt_data(encrypted_data, parsed_message.get("algorithm"), parsed_message.get("client_id"))
                 parsed_message['data'] = json.loads(decrypted_data)
                 print(f"Decrypted message: {parsed_message}")
             except Exception as e:
@@ -371,10 +372,13 @@ class UserRepository:
         
         if parsed_message.get('encrypt'):
             response_data = json.loads(response).get('data')
-            encrypted_response_data = self.encrypt_data(json.dumps(response_data), parsed_message.get("client_id"))
+            encrypted_response_data = self.encrypt_data(json.dumps(response_data), parsed_message.get("algorithm"), parsed_message.get("client_id"))
             response = json.loads(response)
+            response['encrypt'] = True
+            response['algorithm'] = parsed_message.get("algorithm")
             response['data'] = encrypted_response_data
             response = json.dumps(response)
+
 
         logging.info(f"\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Response: {response}!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
         session.close()

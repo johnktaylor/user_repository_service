@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives import serialization
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from user_repository import UserRepository, load_settings
 from messageprocessing.messagedatefunctions import MessageDateFunctions
-from messageprocessing.messageencryption import MessageEncryption
+from messageprocessing.messageencryption import MessageEncryptionAes256CBC
 from messageprocessing.messageverification import MessageVerification
 
 # Configure logging to display debug messages
@@ -21,7 +21,7 @@ class TestEncryptionFunctions(unittest.TestCase):
         self.user_repo = UserRepository(
             settings=settings,
             messageverification=MessageVerification(settings),
-            messageencryption=MessageEncryption(settings),
+            messageencryption=MessageEncryptionAes256CBC(settings),
             messagedatefunctions=MessageDateFunctions())
         self.private_key = self.__load_private_key(settings['cryptography']['private_key_paths']['unit_tests'])
 

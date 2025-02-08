@@ -8,6 +8,7 @@ import base64
 from cryptography.hazmat.primitives import padding as sym_padding, serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.asymmetric import padding, dh
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 
@@ -170,7 +171,7 @@ class EncryptionTestUserRepository(unittest.TestCase):
         return derived_key
 
     @staticmethod
-    def __encrypt_data(plaintext: str, encryption_key) -> str:
+    def __encrypt_data_aes_cbc(plaintext: str, encryption_key) -> str:
 
         """
         Encrypts the plaintext using AES CBC mode.
@@ -183,17 +184,21 @@ class EncryptionTestUserRepository(unittest.TestCase):
         """
         if not isinstance(plaintext, str):
             raise TypeError("Input data must be a string")
+        
+        if not encryption_key:  
+            raise ValueError("Encryption key is required")
 
         iv = os.urandom(16)  # Initialization vector
         cipher = Cipher(algorithms.AES(encryption_key), modes.CBC(iv), backend=default_backend())
         encryptor = cipher.encryptor()
         padder = sym_padding.PKCS7(128).padder()
+
         padded_data = padder.update(plaintext.encode('utf-8')) + padder.finalize()
         ciphertext = encryptor.update(padded_data) + encryptor.finalize()
         return base64.b64encode(iv + ciphertext).decode('utf-8')
 
     @staticmethod
-    def __decrypt_data(ciphertext_b64: str, encryption_key) -> str:
+    def __decrypt_data_aes_cbc(ciphertext_b64: str, encryption_key) -> str:
         """
         Decrypts the base64-encoded ciphertext using AES CBC mode.
 
@@ -206,6 +211,9 @@ class EncryptionTestUserRepository(unittest.TestCase):
         if not isinstance(ciphertext_b64, str):
             raise TypeError("Input data must be a string")
         
+        if not encryption_key:
+            raise ValueError("Encryption key is required")
+        
         ciphertext = base64.b64decode(ciphertext_b64)
         iv = ciphertext[:16]
         actual_ciphertext = ciphertext[16:]
@@ -215,6 +223,68 @@ class EncryptionTestUserRepository(unittest.TestCase):
         unpadder = sym_padding.PKCS7(128).unpadder()
         plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
         return plaintext.decode('utf-8')
+    
+    @staticmethod
+    def __encrypt_data_aes_gcm(plaintext: str, encryption_key) -> str:
+
+        """
+        Encrypts the plaintext using AES CBC mode.
+
+        Args:
+            plaintext (str): The data to encrypt.
+
+        Returns:
+            str: The base64-encoded ciphertext.
+        """
+        if not isinstance(plaintext, str):
+            raise TypeError("Input data must be a string")
+        
+        if not encryption_key:  
+            raise ValueError("Encryption key is required")
+
+        # AES-GCM requires a 12-byte nonce
+        nonce = os.urandom(12)
+        key = encryption_key
+
+        # Instantiate AESGCM with the derived key
+        aesgcm = AESGCM(key)
+
+        # Encrypt; no additional authenticated data (AAD) is provided here (pass None)
+        ciphertext = aesgcm.encrypt(nonce, plaintext.encode('utf-8'), None)
+
+        # Prepend the nonce to the ciphertext; both are needed for decryption
+        return base64.b64encode(nonce + ciphertext).decode('utf-8')
+
+    @staticmethod
+    def __decrypt_data_aes_gcm(ciphertext_b64: str, encryption_key) -> str:
+        """
+        Decrypts the base64-encoded ciphertext using AES CBC mode.
+
+        Args:
+            ciphertext_b64 (str): The base64-encoded ciphertext.
+
+        Returns:
+            str: The decrypted plaintext.
+        """
+        if not isinstance(ciphertext_b64, str):
+            raise TypeError("Input data must be a string")
+        
+        if not encryption_key:
+            raise ValueError("Encryption key is required")
+        
+        # Decode the base64 data
+        data = base64.b64decode(ciphertext_b64)
+
+        # Extract the 12-byte nonce and the actual ciphertext (which includes the tag)
+        nonce = data[:12]
+        actual_ciphertext = data[12:]
+        key = encryption_key
+
+        aesgcm = AESGCM(key)
+
+        # Decrypt; if the ciphertext was tampered with, this will raise an exception
+        plaintext_bytes = aesgcm.decrypt(nonce, actual_ciphertext, None)
+        return plaintext_bytes.decode('utf-8')
     
     @classmethod
     def __sign_message(cls, message: dict) -> str:
@@ -244,6 +314,9 @@ class EncryptionTestUserRepository(unittest.TestCase):
     def __send_and_receive_message(self, message):
         """Send a message and wait for the corresponding response."""
         request_id = message['request_id']  # Retrieve request_id from the message
+        print("*****************Sending message*****************")
+        print(message)
+        print("*****************End of message*****************")
 
         # Publish the message
         self.channel.basic_publish(
@@ -263,8 +336,12 @@ class EncryptionTestUserRepository(unittest.TestCase):
             with self.responses_lock:
                 if request_id in self.responses:
                     response = self.responses.pop(request_id)
+                    print("*****************Received response*****************")
+                    print(response)
+                    print("*****************End of response*****************")
                     return response
             time.sleep(0.1)  # Sleep briefly to wait for the response
+
 
         self.fail(f"No response received for request_id: {request_id} within timeout period.")
 
@@ -276,7 +353,7 @@ class EncryptionTestUserRepository(unittest.TestCase):
         encryption_key = self.__perform_key_exchange_if_not_set(self.client_id, self.timestamp)
         self.assertIsNotNone(encryption_key)
 
-    def test_create_users_encrypted(self):
+    def test_create_users_encrypted_aes_cbc(self):
         encryption_key = self.__perform_key_exchange_if_not_set(self.client_id, self.timestamp)
 
         logging.debug("Running test_create_users_encrypted")
@@ -286,6 +363,7 @@ class EncryptionTestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,
             "operation": "create_users",
             "encrypt": True,
+            "algorithm": "aes_cbc",
             "data": {
                 "username": f"jane_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
                 "email": "jane@example.com",
@@ -295,18 +373,52 @@ class EncryptionTestUserRepository(unittest.TestCase):
             "comment": "test_create_users_encrypted"
         }
         message["request_id"] = request_id  # Include request_id in the message
-        message["data"] = self.__encrypt_data(json.dumps(message["data"]), encryption_key)
+        message["data"] = self.__encrypt_data_aes_cbc(json.dumps(message["data"]), encryption_key)
         message["signature"] = self.__sign_message(message)
         response = self.__send_and_receive_message(message)  # Removed request_id parameter
-        response_data = json.loads(self.__decrypt_data(response["data"], encryption_key))
-        print("Create Users Encrypted Response:", response_data)
+        response_data = json.loads(self.__decrypt_data_aes_cbc(response["data"], encryption_key))
         if response["status"] != "success":
             self.fail(f"Create Users Encrypted failed with status: {response['status']}")
 
         self.assertEqual(response["status"], "success")
+        self.assertEqual(response["algorithm"], "aes_cbc")
+        self.assertEqual(response["encrypt"], True)
         self.assertIn("id", response_data)
 
-    def test_get_users_by_id_encrypted(self):
+    def test_create_users_encrypted_aes_gcm(self):
+        encryption_key = self.__perform_key_exchange_if_not_set(self.client_id, self.timestamp)
+
+        logging.debug("Running test_create_users_encrypted")
+        request_id = str(uuid.uuid4())  # Generate unique request_id
+        message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "create_users",
+            "encrypt": True,
+            "algorithm": "aes_gcm",
+            "data": {
+                "username": f"jane_doe_{uuid.uuid4()}",  # Updated to ensure uniqueness
+                "email": "jane@example.com",
+                "user_type": "human",
+                "expiry_date": "2025-01-01T00:00:00Z"
+            },
+            "comment": "test_create_users_encrypted"
+        }
+        message["request_id"] = request_id  # Include request_id in the message
+        message["data"] = self.__encrypt_data_aes_gcm(json.dumps(message["data"]), encryption_key)
+        message["signature"] = self.__sign_message(message)
+        response = self.__send_and_receive_message(message)  # Removed request_id parameter
+        response_data = json.loads(self.__decrypt_data_aes_gcm(response["data"], encryption_key))
+        if response["status"] != "success":
+            self.fail(f"Create Users Encrypted failed with status: {response['status']}")
+
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(response["algorithm"], "aes_gcm")
+        self.assertEqual(response["encrypt"], True)
+        self.assertIn("id", response_data)
+
+
+    def test_get_users_by_id_encrypted_aes_cbc(self):
         encryption_key = self.__perform_key_exchange_if_not_set(self.client_id, self.timestamp)
 
         logging.debug("Running test_get_users_encrypted")
@@ -317,6 +429,7 @@ class EncryptionTestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,
             "operation": "create_users",
             "encrypt": True,
+            "algorithm": "aes_cbc",
             "data": {
                 "username": f"jane_doe_{uuid.uuid4()}",
                 "email": "jane@example.com",
@@ -326,13 +439,16 @@ class EncryptionTestUserRepository(unittest.TestCase):
             "comment": "test_get_users_encrypted"
         }
         create_message["request_id"] = create_request_id  # Include request_id in the message
-        create_message["data"] = self.__encrypt_data(json.dumps(create_message["data"]), encryption_key)
+        create_message["data"] = self.__encrypt_data_aes_cbc(json.dumps(create_message["data"]), encryption_key)
         create_message["signature"] = self.__sign_message(create_message)
         create_response = self.__send_and_receive_message(create_message)  # Removed request_id parameter
-        create_response_data = json.loads(self.__decrypt_data(create_response["data"], encryption_key))
+        create_response_data = json.loads(self.__decrypt_data_aes_cbc(create_response["data"], encryption_key))
         self.assertEqual(create_response["status"], "success")
+        self.assertEqual(create_response["algorithm"], "aes_cbc")
+        self.assertEqual(create_response["encrypt"], True)
         self.assertIn("id", create_response_data)
         user_id = create_response_data["id"]
+
 
         # Now, get the user with encryption handled by user_repository.py
         get_request_id = str(uuid.uuid4())  # Generate unique request_id
@@ -341,24 +457,85 @@ class EncryptionTestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,
             "operation": "get_users",
             "encrypt": True,
+            "algorithm": "aes_cbc",
             "data": {
                 "id": user_id
             },
             "comment": "test_get_users_encrypted"
         }
         get_message["request_id"] = get_request_id  # Include request_id in the message
-        get_message["data"] = self.__encrypt_data(json.dumps(get_message["data"]), encryption_key)
+        get_message["data"] = self.__encrypt_data_aes_cbc(json.dumps(get_message["data"]), encryption_key)
         get_message["signature"] = self.__sign_message(get_message)
         response = self.__send_and_receive_message(get_message)  # Removed request_id parameter
-        response_data = json.loads(self.__decrypt_data(response["data"], encryption_key))
-        print("Get Users Encrypted Response:", response_data)
+        response_data = json.loads(self.__decrypt_data_aes_cbc(response["data"], encryption_key))
         if response["status"] != "success":
-            logging.error("Encrypted user retrieval failed.")
             self.fail("Encrypted user retrieval failed.")
         self.assertEqual(response["status"], "success")
+        self.assertEqual(response["algorithm"], "aes_cbc")
+        self.assertEqual(response["encrypt"], True)
         self.assertEqual(response_data["id"], user_id)
 
-    def test_batch_operation_encrypted(self):
+
+    def test_get_users_by_id_encrypted_aes_gcm(self):
+        encryption_key = self.__perform_key_exchange_if_not_set(self.client_id, self.timestamp)
+
+        logging.debug("Running test_get_users_encrypted")
+        # First, create a user
+        create_request_id = str(uuid.uuid4())  # Generate unique request_id
+        create_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "create_users",
+            "encrypt": True,
+            "algorithm": "aes_gcm",
+            "data": {
+                "username": f"jane_doe_{uuid.uuid4()}",
+                "email": "jane@example.com",
+                "user_type": "human",
+                "expiry_date": "2025-01-01T00:00:00Z"
+            },
+            "comment": "test_get_users_encrypted"
+        }
+        create_message["request_id"] = create_request_id  # Include request_id in the message
+        create_message["data"] = self.__encrypt_data_aes_gcm(json.dumps(create_message["data"]), encryption_key)
+        create_message["signature"] = self.__sign_message(create_message)
+        create_response = self.__send_and_receive_message(create_message)  # Removed request_id parameter
+        create_response_data = json.loads(self.__decrypt_data_aes_gcm(create_response["data"], encryption_key))
+        self.assertEqual(create_response["status"], "success")
+        self.assertEqual(create_response["algorithm"], "aes_gcm")
+        self.assertEqual(create_response["encrypt"], True)
+        self.assertIn("id", create_response_data)
+        user_id = create_response_data["id"]
+
+
+        # Now, get the user with encryption handled by user_repository.py
+        get_request_id = str(uuid.uuid4())  # Generate unique request_id
+        get_message = {
+            "client_id": self.client_id,
+            "timestamp": self.timestamp,
+            "operation": "get_users",
+            "encrypt": True,
+            "algorithm": "aes_gcm",
+            "data": {
+                "id": user_id
+            },
+            "comment": "test_get_users_encrypted"
+
+        }
+        get_message["request_id"] = get_request_id  # Include request_id in the message
+        get_message["data"] = self.__encrypt_data_aes_gcm(json.dumps(get_message["data"]), encryption_key)
+        get_message["signature"] = self.__sign_message(get_message)
+        response = self.__send_and_receive_message(get_message)  # Removed request_id parameter
+        response_data = json.loads(self.__decrypt_data_aes_gcm(response["data"], encryption_key))
+        if response["status"] != "success":
+            self.fail("Encrypted user retrieval failed.")
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(response["algorithm"], "aes_gcm")
+        self.assertEqual(response["encrypt"], True)
+        self.assertEqual(response_data["id"], user_id)
+
+
+    def test_batch_operation_encrypted_aes_cbc(self):
         encryption_key = self.__perform_key_exchange_if_not_set(self.client_id, self.timestamp)
 
         logging.debug("Running test_batch_operation_encrypted")
@@ -371,6 +548,7 @@ class EncryptionTestUserRepository(unittest.TestCase):
             "timestamp": self.timestamp,  # Ensure ISO format
             "operation": "batch_operations",
             "encrypt": True,
+            "algorithm": "aes_cbc",
             "data": {
                 "actions": [
                     {
@@ -406,17 +584,78 @@ class EncryptionTestUserRepository(unittest.TestCase):
             "comment": "test_batch_operation_encrypted"
         }
 
-        batch_message["data"] = self.__encrypt_data(json.dumps(batch_message["data"]), encryption_key)
+        batch_message["data"] = self.__encrypt_data_aes_cbc(json.dumps(batch_message["data"]), encryption_key)
         batch_message["signature"] = self.__sign_message(batch_message)
         response = self.__send_and_receive_message(batch_message)  # Removed request_id parameter
-        logging.info("**************** Batch Operation Response: %s", response)
-
-        print("Batch Operation Response:", response)
-        response_data = json.loads(self.__decrypt_data(response["data"], encryption_key))
+        response_data = json.loads(self.__decrypt_data_aes_cbc(response["data"], encryption_key))
         if response["status"] != "success":
             print(f"Error: {response.get('message')}, Error Code: {response.get('error_code')}")
         self.assertEqual(response["status"], "success")
+        self.assertEqual(response["algorithm"], "aes_cbc")
+        self.assertEqual(response["encrypt"], True)
         self.assertEqual(len(response_data["results"]), 3)
+
+
+    def test_batch_operation_encrypted_aes_gcm(self):
+        encryption_key = self.__perform_key_exchange_if_not_set(self.client_id, self.timestamp)
+
+        logging.debug("Running test_batch_operation_encrypted")
+        fixed_uuid = str(uuid.uuid4())
+        reqid = str(uuid.uuid4())  # Generate a new request ID for the batch operation
+
+        batch_message = {
+            "client_id": self.client_id,
+            "request_id": reqid,
+            "timestamp": self.timestamp,  # Ensure ISO format
+            "operation": "batch_operations",
+            "encrypt": True,
+            "algorithm": "aes_gcm",
+            "data": {
+                "actions": [
+                    {
+                        "action": "create_users",  # Updated action name
+                        "data": {
+                            "id": fixed_uuid,  # Specify the fixed UUID
+                            "username": f"john_doe_batch_encrypted_{uuid.uuid4()}",  # Updated for uniqueness
+                            "email": "john_batch@example.com",
+                            "user_type": "human",
+                            "expiry_date": "2024-01-01T00:00:00Z"  # Ensure timestamp format
+                        }
+                    },
+                    {
+                        "action": "create_user_details",
+                        "data": {
+                            "user_id": fixed_uuid,  # Use the same fixed UUID
+                            "details": {"address": "123 Main St"},
+                            "created_at": "2023-01-01T12:00:00Z",  # Updated to ISO format
+                            "updated_at": "2023-01-01T12:00:00Z"   # Updated to ISO format
+                        }
+                    },
+                    {
+                        "action": "create_passwords",  # Updated action name
+                        "data": {
+                            "user_id": fixed_uuid,  # Use the same fixed UUID
+                            "password_hash": "hashed_password",
+                            "expiry_date": "2024-01-01T00:00:00Z",
+                            "created_at": "2023-01-01T12:00:00Z"  # Updated to ISO format
+                        }
+                    }
+                ]
+            },
+            "comment": "test_batch_operation_encrypted"
+        }
+
+        batch_message["data"] = self.__encrypt_data_aes_gcm(json.dumps(batch_message["data"]), encryption_key)
+        batch_message["signature"] = self.__sign_message(batch_message)
+        response = self.__send_and_receive_message(batch_message)  # Removed request_id parameter
+        response_data = json.loads(self.__decrypt_data_aes_gcm(response["data"], encryption_key))
+        if response["status"] != "success":
+            print(f"Error: {response.get('message')}, Error Code: {response.get('error_code')}")
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(response["algorithm"], "aes_gcm")
+        self.assertEqual(response["encrypt"], True)
+        self.assertEqual(len(response_data["results"]), 3)
+
 
 if __name__ == '__main__':
     unittest.main(failfast=True)

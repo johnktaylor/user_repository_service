@@ -131,7 +131,6 @@ class EncryptionTestUserRepository(unittest.TestCase):
         ## Generate a private key using the parameters created in setUpClass
         client_private_key = self.__class__.paramaters.generate_private_key()
 
-
         client_public_key = client_private_key.public_key()
 
         message = {
@@ -148,22 +147,22 @@ class EncryptionTestUserRepository(unittest.TestCase):
 
         if response["status"] != "success":
             self.fail(f"Key exchange request failed with status: {response['status']}")
+        
+        server_public_key = response["data"]["server_public_key"].encode('utf-8')
+
+        salt = base64.b64decode(response["data"]["salt"])
 
         server_public_key = serialization.load_pem_public_key(
-            response["data"]["server_public_key"].encode('utf-8'),
+            server_public_key,
             backend=default_backend()
         )
-
-        print("SERVER PUBLIC KEY: ", 
-              server_public_key.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
-
         # Generate a shared secret
         shared_secret = client_private_key.exchange(server_public_key)
 
         derived_key = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=None,
+            salt=salt,
             info=b'handshake data',
             backend=default_backend()
         ).derive(shared_secret)

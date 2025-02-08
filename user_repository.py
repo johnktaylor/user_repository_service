@@ -255,13 +255,13 @@ class UserRepository:
         Handle key exchange request.
         """
         try:
-            public_key = self.messageencryption.handle_key_exchange(data, original_message)
+            public_key_and_salt = self.messageencryption.handle_key_exchange(data, original_message)
             return self._generate_response(
                 original_message, 
                 "key_exchange_response", 
                 "success", 
                 "Key exchange request completed successfully", 
-                data={"server_public_key": public_key})
+                data={"server_public_key": public_key_and_salt.get("server_public_key"), "salt": public_key_and_salt.get("salt")})
         except Exception as e:
             return self._generate_response(
                 original_message, 

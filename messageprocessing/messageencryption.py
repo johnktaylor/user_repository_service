@@ -43,24 +43,26 @@ class MessageEncryption():
         # Compute shared secret using the client's public key and the server's private key
         shared_secret = server_private_key.exchange(client_public_key)
 
+        salt = os.urandom(16)
+
         # Derive symmetric encryption key from the shared secret using HKDF
-        self.encryption_keys[original_message.get("client_id")] = HKDF(
+        self.encryption_keys[original_message.get("client_id")] = {"derived_key": HKDF(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=None,
+            salt=salt,
             info=b'handshake data',
             backend=default_backend()
-        ).derive(shared_secret)
+        ).derive(shared_secret), "salt": salt}
 
-        print("*****************Encryption keys: ", self.encryption_keys, "*****************")
-        for key, value in self.encryption_keys.items():
-            print("*****************Key: ", key, "Value: ", value, "*****************")
-
-        return server_public_key.public_bytes(
+        # Encode the server's public key and salt
+        pk_bytes = server_public_key.public_bytes(
             serialization.Encoding.PEM, 
             serialization.PublicFormat.SubjectPublicKeyInfo
-        ).decode('utf-8')
+        )
 
+        base64_salt = base64.b64encode(salt).decode('utf-8')
+
+        return {"server_public_key": pk_bytes.decode('utf-8'), "salt": base64_salt}
 
     def encrypt_data(self, plaintext: str, client_id: str) -> str:
         """
@@ -79,7 +81,7 @@ class MessageEncryption():
             raise ValueError("Encryption key not set")
 
         iv = os.urandom(16)  # Initialization vector
-        cipher = Cipher(algorithms.AES(self.encryption_keys.get(client_id)), modes.CBC(iv), backend=default_backend())
+        cipher = Cipher(algorithms.AES(self.encryption_keys.get(client_id).get("derived_key")), modes.CBC(iv), backend=default_backend())
         encryptor = cipher.encryptor()
         padder = sym_padding.PKCS7(128).padder()
 
@@ -107,7 +109,7 @@ class MessageEncryption():
         ciphertext = base64.b64decode(ciphertext_b64)
         iv = ciphertext[:16]
         actual_ciphertext = ciphertext[16:]
-        cipher = Cipher(algorithms.AES(self.encryption_keys.get(client_id)), modes.CBC(iv), backend=default_backend())
+        cipher = Cipher(algorithms.AES(self.encryption_keys.get(client_id).get("derived_key")), modes.CBC(iv), backend=default_backend())
         decryptor = cipher.decryptor()
         padded_plaintext = decryptor.update(actual_ciphertext) + decryptor.finalize()
         unpadder = sym_padding.PKCS7(128).unpadder()
